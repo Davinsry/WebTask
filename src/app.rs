@@ -119,6 +119,103 @@ fn is_quiz_page(url: &str) -> bool {
     url.contains("/mod/quiz/")
 }
 
+/// Skrip yang melumpuhkan anti-cheat client-side MyKlass.
+///
+/// Anti-cheat itu murni JavaScript di halaman (overlay hitam 60 detik, blokir
+/// klik kanan/copy/shortcut via `preventDefault`, dan deteksi pindah tab lewat
+/// `blur`/`visibilitychange`). Tidak ada laporan ke server, jadi cukup membuat
+/// handler-nya tidak pernah terpasang.
+///
+/// Trik utamanya: `document.body.id` dan `classList` diganti lebih dulu saat
+/// `document-start`, sebelum blok anti-cheat di BODY sempat jalan, sehingga
+/// guard `body.id === 'page-mod-quiz-attempt'` selalu false dan seluruh rantai
+/// handler jadi no-op. Sebagai jaring kedua, listener yang tetap terpasang
+/// dibatalkan lewat `stopImmediatePropagation` pada fase capture dan overlay
+/// dibuang.
+///
+/// Catatan: ini hanya menyentuh halaman, bukan form attempt, jadi jawaban yang
+/// dikirim ke Moodle tetap sama.
+const ANTICHEAT_NEUTRALIZE_JS: &str = r#"
+(function(){
+  // Hanya berlaku di host MyKlass; panel lokal dan halaman lain tidak disentuh.
+  var h = location.hostname || '';
+  if (!(h.indexOf('myklass-') === 0 || h.slice(-11) === '.umy.ac.id')) return;
+
+  var QUIZ_ID = 'page-mod-quiz-attempt';
+  try {
+    // 1. Lepas id + class guard. CSS anti-cheat memakai selector
+    //    body#page-mod-quiz-attempt, jadi seleksi teks ikut kembali normal.
+    if (document.body) {
+      document.body.id = 'x';
+      document.body.classList.remove('path-mod-quiz');
+    } else {
+      document.addEventListener('DOMContentLoaded', function(){
+        if (document.body) {
+          document.body.id = 'x';
+          document.body.classList.remove('path-mod-quiz');
+        }
+      }, true);
+    }
+
+    // 2. Buang overlay hitam kalau sudah sempat dibuat, dan cegah dibuat lagi.
+    function dropOverlay(){
+      var o = document.getElementById('anti-cheat-overlay');
+      if (o && o.parentNode) o.parentNode.removeChild(o);
+    }
+    dropOverlay();
+    new MutationObserver(dropOverlay).observe(document.documentElement, {
+      childList: true, subtree: true
+    });
+
+    // 3. Netralkan handler halaman. Listener ini dipasang di window dengan
+    //    fase capture, jadi jalan sebelum handler anti-cheat di document/body.
+    function swallow(e){
+      // Biarkan form kuis tetap normal: jangan sentuh input/textarea/select.
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+                t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (e.type === 'contextmenu' || e.type === 'copy' || e.type === 'cut' ||
+          e.type === 'paste' || e.type === 'mouseup' || e.type === 'selectstart') {
+        e.stopImmediatePropagation();
+      }
+      if (e.type === 'keydown') {
+        var k = e.key;
+        if (e.ctrlKey || e.metaKey) {
+          var c = (k || '').toLowerCase();
+          if (c === 'c' || c === 'v' || c === 'x' || c === 'a' || c === 'p' || c === 's') {
+            e.stopImmediatePropagation();
+          }
+        }
+        if (k === 'PrintScreen' || k === 'Print') e.stopImmediatePropagation();
+      }
+    }
+    ['contextmenu','copy','cut','paste','mouseup','selectstart','keydown','keyup']
+      .forEach(function(t){ window.addEventListener(t, swallow, true); });
+
+    // 4. Matikan deteksi pindah tab/aplikasi: blur, visibilitychange, dan
+    //    document.hidden dilaporkan selalu "aman".
+    window.addEventListener('blur', function(e){ e.stopImmediatePropagation(); }, true);
+    window.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
+    document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
+    window.addEventListener('beforeprint', function(e){ e.stopImmediatePropagation(); }, true);
+    try {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: function(){ return false; } });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: function(){ return 'visible'; } });
+    } catch (_) {}
+    try { window.print = function(){}; } catch (_) {}
+
+    // 5. Kembalikan hak copy. CSS anti-cheat memakai !important, jadi seleksi
+    //    teks dipaksa lewat stylesheet yang lebih akhir.
+    var st = document.createElement('style');
+    st.textContent = 'body#page-mod-quiz-attempt,#page-mod-quiz-attempt #content,' +
+      'body#page-mod-quiz-attempt *{-webkit-user-select:text!important;user-select:text!important}' +
+      '@media print{body#page-mod-quiz-attempt{display:block!important}}';
+    (document.head || document.documentElement).appendChild(st);
+  } catch (e) {}
+})();
+"#;
+
+
 /// Ikon jendela dari ICO yang tertanam di binary (tanpa file eksternal saat distribusi).
 #[cfg(target_os = "windows")]
 fn window_icon() -> Option<tao::window::Icon> {
@@ -273,6 +370,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--auth-negotiate-delegate-allowlist=webtask.invalid"
         ))
         .with_initialization_script(init_script())
+        .with_initialization_script(ANTICHEAT_NEUTRALIZE_JS)
         .with_on_page_load_handler(move |event, url| {
             use wry::PageLoadEvent;
             if !matches!(event, PageLoadEvent::Finished) || !is_quiz_page(&url) {

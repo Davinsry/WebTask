@@ -85,6 +85,18 @@ berpindah ke depan lewat Alt+Tab.
   taskbar dan daftar Alt+Tab).
 - **Alt+F4** menutup WebTask.
 
+## Anti-cheat MyKlass
+
+MyKlass menyisipkan pengaman JavaScript murni di halaman (overlay hitam 60
+detik, blokir klik kanan/copy/shortcut, dan deteksi pindah tab lewat
+`blur`/`visibilitychange`). Tidak ada laporan ke server dari skrip itu.
+
+WebTask menetralkannya pada host `myklass-*` dan `*.umy.ac.id`: `body.id`
+dilepas sebelum skrip anti-cheat jalan, overlay dibuang, listener-nya
+dibatalkan di fase capture, `document.hidden` selalu `false`, dan hak pilih
+teks + klik kanan dikembalikan. Form jawaban tidak disentuh, jadi pengiriman
+jawaban ke Moodle tetap normal.
+
 ## Yang disimpan
 
 ```
