@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Login MyKlass sekali, simpan cookie ke ~/.bilik/cookies.json.
+"""Login MyKlass sekali, simpan cookie ke ~/.webtask/cookies.json.
 
 Dipakai karena myklass-*.umy.ac.id di belakang Cloudflare interactive challenge.
 Botasaurus bisa lewat; Chromium Playwright mentah tidak. Jadi login di sini,
-lalu cookie (termasuk cf_clearance) ditanam ke browser Bilik.
+lalu cookie (termasuk cf_clearance) ditanam ke browser WebTask.
 
 PENTING: cf_clearance terikat ke User-Agent. Skrip ini menyimpan UA yang dipakai,
-dan Bilik memakai UA yang sama persis. Jangan ganti UA di Bilik.
+dan WebTask memakai UA yang sama persis. Jangan ganti UA di WebTask.
 
   python3 scripts/login.py
   python3 scripts/login.py myklass-mkwu.umy.ac.id
@@ -16,8 +16,8 @@ import sys
 import json
 import time
 
-BILIK_DIR = os.path.expanduser("~/.bilik")
-OUT = os.path.join(BILIK_DIR, "cookies.json")
+WEBTASK_DIR = os.path.expanduser("~/.webtask")
+OUT = os.path.join(WEBTASK_DIR, "cookies.json")
 CRED = "/home/admin_/krs-umy/.env"
 
 
@@ -39,7 +39,7 @@ def main():
     from pyvirtualdisplay import Display
     from botasaurus.browser import browser, Driver
 
-    os.makedirs(BILIK_DIR, exist_ok=True)
+    os.makedirs(WEBTASK_DIR, exist_ok=True)
     display = Display(visible=False, size=(1440, 900))
     display.start()
     result = {}

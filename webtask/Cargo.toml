@@ -1,0 +1,35 @@
+[package]
+name = "webtask"
+version = "0.1.0"
+edition = "2021"
+description = "Ruang ujian tanpa kunci"
+repository = "https://github.com/Davinsry/WebTask"
+readme = "README.md"
+license = "MIT"
+
+[[bin]]
+name = "webtask"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+plist = "1.7"
+tiny_http = "0.12"
+tao = "0.37"
+wry = "0.57"
+webview2-com = "0.39"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

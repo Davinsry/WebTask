@@ -1,0 +1,2 @@
+botasaurus>=4.0
+pyvirtualdisplay>=3.0

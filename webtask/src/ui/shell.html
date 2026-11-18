@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebTask</title>
+<style>
+  :root{
+    --bg:#FAF9F7; --surface:#FFFFFF; --ink:#16181D; --ink-2:#5A5F6B;
+    --line:#E4E1DB; --line-2:#CFCAC1; --accent:#1F4E79; --accent-ink:#FFFFFF;
+    --accent-soft:#EAF0F6; --ok:#1F7A4D; --ok-soft:#E8F3EC; --bad:#B3261E; --bad-soft:#FBEAE9;
+    --r-control:6px; --r-panel:10px;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.5;display:flex;flex-direction:column;
+  }
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:14px 28px;border-bottom:1px solid var(--line);background:var(--surface);
+  }
+  .brand{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:-.01em;font-size:16px}
+  .brand svg{flex:none;display:block}
+  .brand .dot{color:var(--accent)}
+  .brand-sub{color:var(--ink-2);font-size:12px}
+
+  main{flex:1;overflow:auto;scroll-padding-top:24px}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 28px 64px}
+
+  h1{font-size:28px;line-height:1.2;letter-spacing:-.02em;font-weight:650;margin:0 0 8px}
+  .lead{color:var(--ink-2);margin:0 0 24px;max-width:52ch}
+  .lead code{font-family:var(--mono);font-size:.92em;background:var(--accent-soft);color:var(--accent);
+    padding:1px 5px;border-radius:4px}
+
+  /* Drop zone: satu-satunya titik perhatian sebelum ada isi */
+  #drop{
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    border:1.5px dashed var(--line-2);border-radius:var(--r-panel);
+    padding:40px 24px;text-align:center;background:var(--surface);
+    transition:border-color .12s ease,background .12s ease;
+  }
+  #drop.hot{border-color:var(--accent);background:var(--accent-soft)}
+  #drop .glyph{color:var(--ink-2);margin-bottom:2px}
+  #drop.hot .glyph{color:var(--accent)}
+  #drop .title{font-weight:600;font-size:15px}
+  #drop .hint{color:var(--ink-2);font-size:13px}
+
+  .btn{
+    font:inherit;font-weight:600;font-size:13px;cursor:pointer;
+    border:1px solid var(--line-2);background:var(--surface);color:var(--ink);
+    border-radius:var(--r-control);padding:8px 14px;
+    transition:border-color .12s ease,background .12s ease;
+  }
+  .btn:hover{border-color:var(--ink-2)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn.primary:hover{background:#1a4266;border-color:#1a4266}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  .btn.small{padding:5px 10px;font-size:12px;font-weight:600}
+  .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
+  #drop .btn{margin-top:6px}
+
+  #msg{margin-top:14px;font-size:13px;min-height:20px;display:flex;align-items:center;gap:7px}
+  #msg:empty{display:none}
+  #msg .mark{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink-2)}
+  #msg.ok{color:var(--ok)} #msg.ok .mark{background:var(--ok)}
+  #msg.err{color:var(--bad)} #msg.err .mark{background:var(--bad)}
+  #msg.busy{color:var(--ink-2)}
+
+  .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:36px 0 10px}
+  h2{font-size:14px;font-weight:650;margin:0}
+  .count{color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums}
+
+  /* Daftar config: baris keputusan, bukan grid kartu seragam */
+  .list{border:1px solid var(--line);border-radius:var(--r-panel);background:var(--surface);overflow:hidden}
+  .item{display:flex;gap:16px;align-items:center;padding:14px 16px;border-top:1px solid var(--line)}
+  .item:first-child{border-top:0}
+  .item.current{box-shadow:inset 3px 0 0 var(--accent)}
+  .item .body{min-width:0;flex:1}
+  .item .name{font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .item .name .file{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .status{font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .status.on{color:var(--ok);background:var(--ok-soft)}
+  .item .meta{color:var(--ink-2);font-size:12.5px;margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
+  .item .meta .cmid{font-variant-numeric:tabular-nums}
+  .item .key{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:4px;
+    display:inline-flex;align-items:center;gap:6px}
+  .item .key .val{color:var(--ink)}
+  .acts{display:flex;gap:6px;flex:none}
+  .acts .open{display:inline-flex;align-items:center;gap:5px}
+
+  .empty{padding:22px 16px;color:var(--ink-2);font-size:13px}
+  .empty strong{color:var(--ink);font-weight:600}
+  .empty .next{display:block;margin-top:3px}
+
+  .foot{margin-top:28px;color:var(--ink-2);font-size:12px}
+  .foot code{font-family:var(--mono)}
+
+  @media (max-width:560px){
+    .wrap{padding:24px 16px 48px}
+    h1{font-size:23px}
+    .item{flex-direction:column;align-items:stretch;gap:10px}
+    .acts{justify-content:flex-start}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;animation:none!important}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path d="M16 8H42L54 20V50C54 53.314 51.314 56 48 56H16C12.686 56 10 53.314 10 50V14C10 10.686 12.686 8 16 8Z" fill="#0F172A"/>
+      <path d="M42 8V16C42 18.209 43.791 20 46 20H54L42 8Z" fill="#2563EB"/>
+      <path d="M21 35.5L28.5 43L43.5 27" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span>WebTask<span class="dot">.</span></span>
+  </div>
+  <div class="brand-sub">Ruang ujian tanpa kunci</div>
+</header>
+
+<main>
+<div class="wrap">
+  <h1>Import config ujian</h1>
+  <p class="lead">Setiap quiz punya file <code>.seb</code> sendiri. Tarik filenya — WebTask menghitung
+    config key dan membuka quiz di jendela ini.</p>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Tarik file .seb ke sini, atau tekan Enter untuk memilih file">
+    <svg class="glyph" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"/>
+    </svg>
+    <div class="title">Tarik file <code>.seb</code> ke sini</div>
+    <div class="hint">atau pilih dari komputer</div>
+    <button class="btn primary" id="pick" type="button">Pilih file</button>
+    <input type="file" id="file" accept=".seb,text/xml,application/xml" hidden>
+  </div>
+
+  <div id="msg" role="status" aria-live="polite"></div>
+
+  <div class="section-head">
+    <h2>Config tersimpan</h2>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="list" id="list"></div>
+
+  <p class="foot">Config tersimpan di <code>~/.webtask/configs.json</code>.
+    Klik <strong>Buka</strong> untuk membuka quiz memakai config itu.</p>
+</div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const listEl = $("#list"), countEl = $("#count"), msgEl = $("#msg");
+
+function setMsg(text, kind){
+  msgEl.className = kind || "";
+  msgEl.textContent = "";
+  if(!text) return;
+  const dot = document.createElement("span");
+  dot.className = "mark"; dot.setAttribute("aria-hidden","true");
+  msgEl.append(dot, document.createTextNode(text));
+}
+
+function el(tag, cls, text){
+  const n = document.createElement(tag);
+  if(cls) n.className = cls;
+  if(text != null) n.textContent = text;
+  return n;
+}
+
+function post(path, body){
+  return fetch(path, {
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
+  }).then(r => r.json());
+}
+
+function openTab(url){
+  if(window.ipc && window.ipc.postMessage){
+    window.ipc.postMessage(JSON.stringify({type:"open", url}));
+  } else {
+    location.href = url;
+  }
+}
+
+async function refresh(){
+  let r;
+  try { r = await fetch("/api/state").then(x => x.json()); }
+  catch { setMsg("Tidak bisa menghubungi WebTask.", "err"); return; }
+
+  const configs = r.configs || [];
+  countEl.textContent = configs.length ? configs.length + " config" : "";
+  listEl.textContent = "";
+
+  if(!configs.length){
+    const box = el("div","empty");
+    box.append(el("strong", null, "Belum ada config."));
+    const next = el("span","next","Tarik file .seb di atas untuk memulai. WebTask akan menghitung config key dan membuka quiznya.");
+    box.append(next);
+    listEl.append(box);
+    return;
+  }
+
+  for(const c of configs){
+    const isCurrent = r.active && c.id === r.active.id;
+    const item = el("div","item" + (isCurrent ? " current" : ""));
+
+    const body = el("div","body");
+    const name = el("div","name");
+    name.append(el("span","file", c.filename || "config.seb"));
+    if(isCurrent){
+      const s = el("span","status on","Aktif");
+      name.append(s);
+    }
+    body.append(name);
+
+    const meta = el("div","meta");
+    meta.append(el("span", null, c.host || "-"));
+    const cmid = el("span","cmid","cmid " + (c.cmid ?? "-"));
+    meta.append(cmid);
+    if(c.importedAt) meta.append(el("span", null, c.importedAt));
+    body.append(meta);
+
+    const key = el("div","key");
+    key.append(document.createTextNode("key"), el("span","val",(c.configKey || "").slice(0,16) + "…"));
+    body.append(key);
+
+    const acts = el("div","acts");
+    const openBtn = el("button","btn small open", "Buka");
+    openBtn.type = "button";
+    openBtn.setAttribute("aria-label", "Buka quiz untuk " + (c.filename || "config ini"));
+    openBtn.addEventListener("click", () => openTab(c.startURL));
+
+    const actBtn = el("button","btn small", isCurrent ? "Aktif" : "Aktifkan");
+    actBtn.type = "button";
+    actBtn.disabled = !!isCurrent;
+    actBtn.addEventListener("click", async () => {
+      await post("/api/activate", {id: c.id});
+      setMsg("Config diaktifkan: " + (c.filename || "config"), "ok");
+      refresh();
+    });
+
+    const delBtn = el("button","btn small danger","Hapus");
+    delBtn.type = "button";
+    delBtn.setAttribute("aria-label", "Hapus " + (c.filename || "config ini"));
+    delBtn.addEventListener("click", async () => {
+      await post("/api/delete", {id: c.id});
+      setMsg("Config dihapus.");
+      refresh();
+    });
+
+    acts.append(openBtn, actBtn, delBtn);
+    item.append(body, acts);
+    listEl.append(item);
+  }
+}
+
+async function install(content, filename){
+  setMsg("Membaca file…", "busy");
+  let r;
+  try { r = await post("/api/config", {content, filename}); }
+  catch { setMsg("Gagal mengirim file ke WebTask.", "err"); return; }
+
+  if(!r.ok){ setMsg(r.error || "Gagal import.", "err"); return; }
+  setMsg("Config terpasang: " + (r.config.filename || "config") + " — membuka quiz.", "ok");
+  refresh();
+}
+
+async function fromFile(f){
+  if(!f) return;
+  if(f.size > 1024 * 1024){ setMsg("File lebih dari 1 MB, tidak wajar untuk config ujian.", "err"); return; }
+  const text = await f.text();
+  install(text, f.name);
+}
+
+const dz = $("#drop");
+["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("hot"); }));
+["dragleave","drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("hot"); }));
+dz.addEventListener("drop", e => fromFile(e.dataTransfer.files[0]));
+dz.addEventListener("keydown", e => {
+  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#file").click(); }
+});
+$("#pick").addEventListener("click", () => $("#file").click());
+$("#file").addEventListener("change", e => fromFile(e.target.files[0]));
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files[0];
+  if(f && !dz.contains(e.target)) fromFile(f);
+});
+
+refresh();
+</script>
+</body>
+</html>

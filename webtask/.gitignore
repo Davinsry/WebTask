@@ -1,0 +1,5 @@
+/target/
+*.seb
+cookies.json
+__pycache__/
+*.pyc
