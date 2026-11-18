@@ -13,6 +13,8 @@ use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::window::{Fullscreen, WindowBuilder};
 use wry::WebViewBuilder;
+#[cfg(target_os = "windows")]
+use wry::WebViewBuilderExtWindows;
 
 use crate::{keys, server, store};
 
@@ -263,6 +265,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let webview = WebViewBuilder::new()
         .with_url(&shell_url)
         .with_devtools(true)
+        .with_additional_browser_args(concat!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
+            // Batasi autentikasi terintegrasi ke host yang tidak pernah dipakai,
+            // supaya WebView2 tidak memunculkan dialog "Windows Security" (NTLM)
+            // untuk server kampus.
+            "--auth-server-allowlist=webtask.invalid ",
+            "--auth-negotiate-delegate-allowlist=webtask.invalid"
+        ))
         .with_initialization_script(init_script())
         .with_on_page_load_handler(move |event, url| {
             use wry::PageLoadEvent;
