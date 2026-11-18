@@ -31,31 +31,24 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Package
+      - name: Rename binary
         shell: pwsh
         run: |
-          $ver = "${{ github.ref_name }}"
-          if (-not $ver -or $ver -eq "workflow_dispatch") { $ver = "dev" }
-          $stage = "dist\webtask-$ver-x86_64-pc-windows-msvc"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "target\release\webtask.exe" "$stage\WebTask.exe"
-          Copy-Item "LICENSE" "$stage\LICENSE.txt"
-          Copy-Item "README.md" "$stage\README.md"
-          Copy-Item "assets\logo.svg" "$stage\logo.svg"
-          Compress-Archive -Path "$stage\*" -DestinationPath "dist\webtask-$ver-x86_64-pc-windows-msvc.zip" -Force
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target\release\webtask.exe" "dist\WebTask.exe"
           Get-ChildItem dist | Select-Object Name, Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: webtask-windows
-          path: dist/*.zip
+          path: dist/WebTask.exe
           if-no-files-found: error
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: dist/WebTask.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
