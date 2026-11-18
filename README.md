@@ -77,8 +77,9 @@ di halaman quiz membawa kembali ke panel.
 ## Mode kiosk
 
 Jendela berjalan kiosk: tanpa title bar, tanpa tombol minimize/maximize/close,
-selalu di atas, dan fullscreen borderless sehingga taskbar tertutup — hanya isi
-web yang terlihat.
+dan fullscreen borderless sehingga taskbar tertutup - hanya isi web yang
+terlihat. Jendela tidak dipaksa selalu di atas, jadi aplikasi lain bisa
+berpindah ke depan lewat Alt+Tab.
 
 - **Alt+Tab** tetap bisa memindah ke aplikasi lain (jendela tetap muncul di
   taskbar dan daftar Alt+Tab).

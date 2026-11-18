@@ -239,7 +239,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_minimizable(false)
         .with_maximizable(false)
         .with_closable(false)
-        .with_always_on_top(true)
         .with_fullscreen(Some(Fullscreen::Borderless(None)));
 
     #[cfg(target_os = "windows")]
@@ -479,9 +478,9 @@ mod kiosk {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetForegroundWindow, GetWindowLongPtrW, IsZoomed, SetWindowLongPtrW,
-        SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        GetClientRect, GetWindowLongPtrW, IsZoomed, SetWindowLongPtrW, SetWindowPos, GWL_STYLE,
+        HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+        WS_SYSMENU, WS_THICKFRAME,
     };
 
     /// Tinggi tambahan di bawah client area untuk menutup taskbar. Borderless
@@ -506,9 +505,12 @@ mod kiosk {
         SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
 
         window.set_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
+        // JANGAN pakai HWND_TOPMOST: jendela topmost merebut depan terus dan
+        // membuat Alt+Tab hanya menampilkan preview tanpa bisa berpindah.
+        // Cukup tempatkan di lapisan normal paling atas.
         let _ = SetWindowPos(
             hwnd,
-            Some(HWND_TOPMOST),
+            Some(HWND_TOP),
             0,
             0,
             0,
@@ -518,7 +520,10 @@ mod kiosk {
         cover_taskbar(hwnd);
     }
 
-    /// Dipanggil berkala dari event loop. Idempoten: aman dipanggil berulang.
+    /// Dipanggil berkala dari event loop. Sengaja TIDAK merebut fokus atau
+    /// menaikkan jendela ke depan: itu membuat Alt+Tab hanya menampilkan preview
+    /// karena WebTask langsung menarik dirinya kembali. Yang dijaga hanya region
+    /// jendela supaya taskbar tetap tertutup.
     pub unsafe fn enforce() {
         let raw = HWND_CELL.load(Ordering::SeqCst);
         if raw == 0 {
@@ -526,23 +531,8 @@ mod kiosk {
         }
         let hwnd = HWND(raw as *mut _);
 
-        // Kalau ada yang keluar dari maximized (mis. shell restore), jendela
-        // dikembalikan ke topmost supaya tetap di depan.
-        if GetForegroundWindow() == hwnd {
-            let _ = SetWindowPos(
-                hwnd,
-                Some(HWND_TOPMOST),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-        }
-
-        // IsZoomed tidak berlaku untuk borderless fullscreen, jadi tidak dipakai
-        // sebagai patokan. Sebagai gantinya, region jendela dijaga setiap kali
-        // ukuran berubah; ini murah dan aman dipanggil berkala.
+        // Kalau ada yang keluar dari maximized (mis. shell restore), pastikan
+        // tetap berukuran penuh. Tidak menyentuh fokus sama sekali.
         if !IsZoomed(hwnd).as_bool() {
             cover_taskbar(hwnd);
         }
