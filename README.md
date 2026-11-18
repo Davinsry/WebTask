@@ -71,8 +71,18 @@ cargo run --release
 ```
 
 Jendela WebTask menampilkan panel. Tarik file `.seb` ke situ (atau klik
-"Pilih file .seb"), quiz langsung terbuka di tab yang sama. Tombol `⌂ Panel`
+"Pilih file .seb"), quiz langsung terbuka di tab yang sama. Tombol `Panel`
 di halaman quiz membawa kembali ke panel.
+
+## Mode kiosk
+
+Jendela berjalan kiosk: tanpa title bar, tanpa tombol minimize/maximize/close,
+selalu di atas, dan fullscreen borderless sehingga taskbar tertutup — hanya isi
+web yang terlihat.
+
+- **Alt+Tab** tetap bisa memindah ke aplikasi lain (jendela tetap muncul di
+  taskbar dan daftar Alt+Tab).
+- **Alt+F4** menutup WebTask.
 
 ## Yang disimpan
 

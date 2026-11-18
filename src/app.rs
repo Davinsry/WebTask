@@ -1,4 +1,4 @@
-//! WebTask — jendela browser + panel UI.
+//! WebTask â€” jendela browser + panel UI.
 //!
 //! Satu jendela `tao`, satu WebView `wry`. WebView menampilkan shell HTML lokal
 //! yang berisi tab bar + kontainer panel. Navigasi ke halaman quiz dilakukan oleh
@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::window::WindowBuilder;
+use tao::window::{Fullscreen, WindowBuilder};
 use wry::WebViewBuilder;
 
 use crate::{keys, server, store};
@@ -225,10 +225,20 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
+    // Mode kiosk: tanpa title bar, tanpa tombol minimize/maximize/close, selalu di
+    // atas, dan fullscreen borderless supaya taskbar tertutup. Alt+Tab tetap bisa
+    // keluar (Windows menangani itu di level shell), Alt+F4 tetap menutup window.
     let mut window_builder = WindowBuilder::new()
         .with_title("WebTask")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(720.0, 480.0));
+        .with_min_inner_size(tao::dpi::LogicalSize::new(720.0, 480.0))
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_minimizable(false)
+        .with_maximizable(false)
+        .with_closable(false)
+        .with_always_on_top(true)
+        .with_fullscreen(Some(Fullscreen::Borderless(None)));
 
     #[cfg(target_os = "windows")]
     {
@@ -271,6 +281,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     unsafe {
         windows_header_hook::install(&webview);
+        kiosk::install(&window);
     }
 
     let shell_url_ref = shell_url;
@@ -316,6 +327,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 while let Ok(url) = open_rx.try_recv() {
                     navigate(&webview, &url);
                 }
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    kiosk::enforce();
+                }
             }
             _ => {}
         }
@@ -356,7 +371,7 @@ fn show_toast(webview: &wry::WebView, text: &str, ok: bool) {
   m.setAttribute('aria-hidden','true');
   m.style.cssText='flex:none;width:8px;height:8px;margin-top:5px;border-radius:2px;background:{mark}';
   var t=document.createElement('span');
-  var b=document.createElement('b'); b.textContent={label:?}+' — ';
+  var b=document.createElement('b'); b.textContent={label:?}+' â€” ';
   t.appendChild(b);
   t.appendChild(document.createTextNode({text:?}));
   d.appendChild(m); d.appendChild(t);
@@ -438,5 +453,101 @@ mod windows_header_hook {
             );
         }
         let _ = core.add_WebResourceRequested(&handler, std::ptr::null_mut());
+    }
+}
+
+/// Penjaga mode kiosk di Windows.
+///
+/// `tao` tidak mencegah `SetFullscreen`/`Restore` dari luar (Win+â†‘, klik taskbar,
+/// atau shell), dan borderless fullscreen masih bisa kehilangan status topmost
+/// saat app lain diaktifkan lewat Alt+Tab. Karena itu jendela diperiksa berkala
+/// dari event loop: kalau ada yang mengubah posisinya, ia dikembalikan.
+#[cfg(target_os = "windows")]
+mod kiosk {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetForegroundWindow, GetWindowLongPtrW, IsZoomed, SetWindowLongPtrW,
+        SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    };
+
+    /// Tinggi tambahan di bawah client area untuk menutup taskbar. Borderless
+    /// fullscreen kadang masih menyisakan taskbar karena area kerja dihitung
+    /// sebelum window masuk mode fullscreen.
+    const TASKBAR_COVER: i32 = 96;
+
+    static HWND_CELL: AtomicIsize = AtomicIsize::new(0);
+
+    pub unsafe fn install(window: &tao::window::Window) {
+        use tao::platform::windows::WindowExtWindows;
+
+        let raw = window.hwnd();
+        let hwnd = HWND(raw as *mut _);
+        HWND_CELL.store(raw, Ordering::SeqCst);
+
+        // Buang tombol minimize/maximize/close dari style jendela. Title bar
+        // sendiri sudah hilang lewat `with_decorations(false)`.
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        let stripped = style
+            & !(WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0 | WS_SYSMENU.0 | WS_THICKFRAME.0);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
+
+        window.set_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+        cover_taskbar(hwnd);
+    }
+
+    /// Dipanggil berkala dari event loop. Idempoten: aman dipanggil berulang.
+    pub unsafe fn enforce() {
+        let raw = HWND_CELL.load(Ordering::SeqCst);
+        if raw == 0 {
+            return;
+        }
+        let hwnd = HWND(raw as *mut _);
+
+        // Kalau ada yang keluar dari maximized (mis. shell restore), jendela
+        // dikembalikan ke topmost supaya tetap di depan.
+        if GetForegroundWindow() == hwnd {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+
+        // IsZoomed tidak berlaku untuk borderless fullscreen, jadi tidak dipakai
+        // sebagai patokan. Sebagai gantinya, region jendela dijaga setiap kali
+        // ukuran berubah; ini murah dan aman dipanggil berkala.
+        if !IsZoomed(hwnd).as_bool() {
+            cover_taskbar(hwnd);
+        }
+    }
+
+    /// Perbesar region jendela melewati tepi bawah layar supaya taskbar tertutup.
+    unsafe fn cover_taskbar(hwnd: HWND) {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        if GetClientRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        let rgn = CreateRectRgn(0, 0, rect.right, rect.bottom + TASKBAR_COVER);
+        if !rgn.is_invalid() {
+            SetWindowRgn(hwnd, Some(rgn), true);
+            let _ = DeleteObject(HGDIOBJ(rgn.0));
+        }
     }
 }
