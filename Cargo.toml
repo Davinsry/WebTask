@@ -26,6 +26,9 @@ uuid = { version = "1", features = ["v4"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_System_Com",
+  "Win32_Security_Cryptography",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
 ] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

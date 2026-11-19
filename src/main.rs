@@ -1,4 +1,5 @@
 mod app;
+mod creds;
 mod keys;
 mod server;
 mod store;

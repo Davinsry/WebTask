@@ -16,7 +16,7 @@ use wry::WebViewBuilder;
 #[cfg(target_os = "windows")]
 use wry::WebViewBuilderExtWindows;
 
-use crate::{keys, server, store};
+use crate::{creds, keys, server, store};
 
 const SEB_HOSTS: [&str; 2] = ["myklass-", ".umy.ac.id"];
 
@@ -82,7 +82,7 @@ fn init_script() -> String {
         .or_else(|| all.first().map(|c| c.config_key.clone()));
 
     format!(
-        "(function(){{\nvar CFG={cfgs},FB={fb};\n{sha}\n\
+        "(function(){{\nwindow.__WebTaskMode={mode};\nvar CFG={cfgs},FB={fb},CRED={cred};\n{sha}\n\
 function key(){{var m=location.search.match(/[?&](?:cmid|id)=(\\d+)/);\n\
  if(m && CFG[m[1]]) return CFG[m[1]]; return FB;}}\n\
 var sec={{version:'WebTask',\n\
@@ -101,13 +101,39 @@ try{{\n\
    p.onclick=function(){{try{{window.ipc.postMessage(JSON.stringify({{type:'panel'}}));}}catch(e){{}}}};\n\
    b.appendChild(p);document.body.appendChild(b);\n\
   }};\n\
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',add);else add();\n\
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',add);else add();\n\
  }}\n\
-}}catch(e){{}}\n\
+ }}catch(e){{}}\n\
+ try{{\n\
+  var m=/\\/login\\/index\\.php/.test(location.pathname);\n\
+  if(m){{\n\
+   var fill=function(){{\n\
+    var u=document.querySelector('input[name=\"username\"],#username');\n\
+    var p=document.querySelector('input[name=\"password\"],#password');\n\
+    if(!u||!p)return;\n\
+    if(CRED&&!u.value){{u.value=CRED.u;u.dispatchEvent(new Event('input',{{bubbles:true}}));}}\n\
+    if(CRED&&!p.value){{p.value=CRED.p;p.dispatchEvent(new Event('input',{{bubbles:true}}));}}\n\
+    var save=function(){{\n\
+     if(!u.value||!p.value)return;\n\
+     try{{window.ipc.postMessage(JSON.stringify({{type:'save_login',username:u.value,password:p.value}}));}}catch(e){{}}\n\
+    }};\n\
+    var f=p.form||document.querySelector('form#login,form.loginform');\n\
+    if(f)f.addEventListener('submit',save,true);\n\
+    var b=document.querySelector('button[type=\"submit\"],#loginbtn');\n\
+    if(b)b.addEventListener('click',save,true);\n\
+   }};\n\
+   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fill);else fill();\n\
+  }}\n\
+ }}catch(e){{}}\n\
 }})();",
         cfgs = json!(cfgs),
         fb = json!(fallback),
         sha = JS_SHA,
+        mode = json!(creds::mode().as_str()),
+        cred = match creds::credentials() {
+            Some((u, p)) => json!({ "u": u, "p": p }).to_string(),
+            None => "null".to_string(),
+        },
     )
 }
 
@@ -324,19 +350,25 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // Mode kiosk: tanpa title bar, tanpa tombol minimize/maximize/close, selalu di
-    // atas, dan fullscreen borderless supaya taskbar tertutup. Alt+Tab tetap bisa
-    // keluar (Windows menangani itu di level shell), Alt+F4 tetap menutup window.
+    // Mode SEB: kiosk penuh, tanpa title bar dan tombol sistem, fullscreen
+    // borderless supaya taskbar tertutup. Mode web: jendela biasa yang bisa
+    // di-resize, dengan title bar dan tombol standar.
+    let seb_mode = creds::mode() == creds::Mode::Seb;
+
     let mut window_builder = WindowBuilder::new()
         .with_title("WebTask")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(720.0, 480.0))
-        .with_decorations(false)
-        .with_resizable(false)
-        .with_minimizable(false)
-        .with_maximizable(false)
-        .with_closable(false)
-        .with_fullscreen(Some(Fullscreen::Borderless(None)));
+        .with_min_inner_size(tao::dpi::LogicalSize::new(720.0, 480.0));
+
+    if seb_mode {
+        window_builder = window_builder
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_minimizable(false)
+            .with_maximizable(false)
+            .with_closable(false)
+            .with_fullscreen(Some(Fullscreen::Borderless(None)));
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -388,7 +420,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     unsafe {
         windows_header_hook::install(&webview);
-        kiosk::install(&window);
+        if seb_mode {
+            kiosk::install(&window);
+        }
     }
 
     let shell_url_ref = shell_url;
@@ -436,7 +470,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 #[cfg(target_os = "windows")]
                 unsafe {
-                    kiosk::enforce();
+                    if creds::mode() == creds::Mode::Seb {
+                        kiosk::enforce();
+                    }
                 }
             }
             _ => {}
@@ -510,6 +546,15 @@ fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>) {
                 let _ = proxy.send_event(UserEvent::VerifyResult(line.to_string()));
             }
         }
+        Some("save_login") => {
+            // Halaman login MyKlass menyerahkan kredensial saat submit; disimpan
+            // terenkripsi supaya kunjungan berikutnya otomatis terisi.
+            let user = msg.get("username").and_then(Value::as_str).unwrap_or("");
+            let pass = msg.get("password").and_then(Value::as_str).unwrap_or("");
+            if !user.is_empty() && !pass.is_empty() {
+                let _ = creds::save(user, pass);
+            }
+        }
         _ => {}
     }
 }
@@ -533,12 +578,17 @@ mod windows_header_hook {
     use wry::WebViewExtWindows;
 
     use crate::app::header_for;
+    use crate::creds;
 
     pub unsafe fn install(webview: &wry::WebView) {
         let core = webview.webview();
         let handler = WebResourceRequestedEventHandler::create(Box::new(|_sender, args| {
             let args: Option<&ICoreWebView2WebResourceRequestedEventArgs> = args.as_ref();
             if let Some(args) = args {
+                // Mode web biasa tidak mengirim header SEB sama sekali.
+                if creds::mode() != creds::Mode::Seb {
+                    return Ok(());
+                }
                 let req = args.Request()?;
                 let mut pw = PWSTR::null();
                 req.Uri(&mut pw)?;

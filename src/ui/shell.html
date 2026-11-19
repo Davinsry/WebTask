@@ -38,19 +38,6 @@
   .lead code{font-family:var(--mono);font-size:.92em;background:var(--accent-soft);color:var(--accent);
     padding:1px 5px;border-radius:4px}
 
-  /* Drop zone: satu-satunya titik perhatian sebelum ada isi */
-  #drop{
-    display:flex;flex-direction:column;align-items:center;gap:8px;
-    border:1.5px dashed var(--line-2);border-radius:var(--r-panel);
-    padding:40px 24px;text-align:center;background:var(--surface);
-    transition:border-color .12s ease,background .12s ease;
-  }
-  #drop.hot{border-color:var(--accent);background:var(--accent-soft)}
-  #drop .glyph{color:var(--ink-2);margin-bottom:2px}
-  #drop.hot .glyph{color:var(--accent)}
-  #drop .title{font-weight:600;font-size:15px}
-  #drop .hint{color:var(--ink-2);font-size:13px}
-
   .btn{
     font:inherit;font-weight:600;font-size:13px;cursor:pointer;
     border:1px solid var(--line-2);background:var(--surface);color:var(--ink);
@@ -63,7 +50,6 @@
   .btn:disabled{opacity:.55;cursor:not-allowed}
   .btn.small{padding:5px 10px;font-size:12px;font-weight:600}
   .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
-  #drop .btn{margin-top:6px}
 
   #msg{margin-top:14px;font-size:13px;min-height:20px;display:flex;align-items:center;gap:7px}
   #msg:empty{display:none}
@@ -101,9 +87,24 @@
   .foot{margin-top:28px;color:var(--ink-2);font-size:12px}
   .foot code{font-family:var(--mono)}
 
+  /* Pemilih mode: dua pilihan besar, satu keputusan */
+  .modes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 28px}
+  .mode{
+    display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;
+    padding:16px 18px;border:1.5px solid var(--line-2);border-radius:var(--r-panel);
+    background:var(--surface);cursor:pointer;font:inherit;color:var(--ink);
+    transition:border-color .12s ease,background .12s ease;
+  }
+  .mode:hover{border-color:var(--ink-2)}
+  .mode[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+  .mode .m-name{display:flex;align-items:center;gap:8px;font-weight:650;font-size:15px}
+  .mode .m-desc{color:var(--ink-2);font-size:12.5px;line-height:1.45}
+  .mode[aria-pressed="true"] .m-name{color:var(--accent)}
+
   @media (max-width:560px){
     .wrap{padding:24px 16px 48px}
     h1{font-size:23px}
+    .modes{grid-template-columns:1fr}
     .item{flex-direction:column;align-items:stretch;gap:10px}
     .acts{justify-content:flex-start}
   }
@@ -127,19 +128,21 @@
 
 <main>
 <div class="wrap">
-  <h1>Import config ujian</h1>
-  <p class="lead">Setiap quiz punya file <code>.seb</code> sendiri. Tarik filenya — WebTask menghitung
-    config key dan membuka quiz di jendela ini.</p>
+  <h1>Mulai sesi</h1>
+  <p class="lead">Pilih mode, lalu masuk ke MyKlass. Kredensial disimpan terenkripsi
+    untuk akun Windows ini.</p>
 
-  <div id="drop" tabindex="0" role="button" aria-label="Tarik file .seb ke sini, atau tekan Enter untuk memilih file">
-    <svg class="glyph" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"/>
-    </svg>
-    <div class="title">Tarik file <code>.seb</code> ke sini</div>
-    <div class="hint">atau pilih dari komputer</div>
-    <button class="btn primary" id="pick" type="button">Pilih file</button>
-    <input type="file" id="file" accept=".seb,text/xml,application/xml" hidden>
+  <div class="modes" role="group" aria-label="Mode sesi">
+    <button class="mode" type="button" id="mode-seb" aria-pressed="false">
+      <span class="m-name">Mode SEB</span>
+      <span class="m-desc">Kunci penuh. Header config ujian dikirim, jendela
+        fullscreen tanpa tombol, anti-cheat dinetralkan.</span>
+    </button>
+    <button class="mode" type="button" id="mode-web" aria-pressed="false">
+      <span class="m-name">Mode web biasa</span>
+      <span class="m-desc">Browser biasa. Tanpa header config, jendela normal
+        dengan title bar, bisa di-resize.</span>
+    </button>
   </div>
 
   <div id="msg" role="status" aria-live="polite"></div>
@@ -150,14 +153,16 @@
   </div>
   <div class="list" id="list"></div>
 
-  <p class="foot">Config tersimpan di <code>~/.webtask/configs.json</code>.
-    Klik <strong>Buka</strong> untuk membuka quiz memakai config itu.</p>
+  <p class="foot">Config tersimpan di <code>~/.webtask/configs.json</code>.</p>
 </div>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
 const listEl = $("#list"), countEl = $("#count"), msgEl = $("#msg");
+const modeSeb = $("#mode-seb"), modeWeb = $("#mode-web");
+
+let current = { mode: "seb" };
 
 function setMsg(text, kind){
   msgEl.className = kind || "";
@@ -181,18 +186,23 @@ function post(path, body){
   }).then(r => r.json());
 }
 
-function openTab(url){
-  if(window.ipc && window.ipc.postMessage){
-    window.ipc.postMessage(JSON.stringify({type:"open", url}));
-  } else {
-    location.href = url;
-  }
+function openUrl(url){
+  post("/api/open", {url});
+}
+
+function paintMode(mode){
+  const seb = mode === "seb";
+  modeSeb.setAttribute("aria-pressed", seb ? "true" : "false");
+  modeWeb.setAttribute("aria-pressed", seb ? "false" : "true");
 }
 
 async function refresh(){
   let r;
   try { r = await fetch("/api/state").then(x => x.json()); }
   catch { setMsg("Tidak bisa menghubungi WebTask.", "err"); return; }
+
+  current = { mode: r.mode || "seb" };
+  paintMode(current.mode);
 
   const configs = r.configs || [];
   countEl.textContent = configs.length ? configs.length + " config" : "";
@@ -201,8 +211,7 @@ async function refresh(){
   if(!configs.length){
     const box = el("div","empty");
     box.append(el("strong", null, "Belum ada config."));
-    const next = el("span","next","Tarik file .seb di atas untuk memulai. WebTask akan menghitung config key dan membuka quiznya.");
-    box.append(next);
+    box.append(el("span","next","Tarik file .seb ke jendela ini untuk menambah config ujian."));
     listEl.append(box);
     return;
   }
@@ -214,28 +223,24 @@ async function refresh(){
     const body = el("div","body");
     const name = el("div","name");
     name.append(el("span","file", c.filename || "config.seb"));
-    if(isCurrent){
-      const s = el("span","status on","Aktif");
-      name.append(s);
-    }
+    if(isCurrent) name.append(el("span","status on","Aktif"));
     body.append(name);
 
     const meta = el("div","meta");
     meta.append(el("span", null, c.host || "-"));
-    const cmid = el("span","cmid","cmid " + (c.cmid ?? "-"));
-    meta.append(cmid);
+    meta.append(el("span","cmid","cmid " + (c.cmid ?? "-")));
     if(c.importedAt) meta.append(el("span", null, c.importedAt));
     body.append(meta);
 
     const key = el("div","key");
-    key.append(document.createTextNode("key"), el("span","val",(c.configKey || "").slice(0,16) + "…"));
+    key.append(document.createTextNode("key"), el("span","val",(c.configKey || "").slice(0,16) + "\u2026"));
     body.append(key);
 
     const acts = el("div","acts");
     const openBtn = el("button","btn small open", "Buka");
     openBtn.type = "button";
     openBtn.setAttribute("aria-label", "Buka quiz untuk " + (c.filename || "config ini"));
-    openBtn.addEventListener("click", () => openTab(c.startURL));
+    openBtn.addEventListener("click", () => openUrl(c.startURL));
 
     const actBtn = el("button","btn small", isCurrent ? "Aktif" : "Aktifkan");
     actBtn.type = "button";
@@ -261,14 +266,26 @@ async function refresh(){
   }
 }
 
+async function pickMode(mode){
+  if(current.mode === mode) return;
+  const r = await post("/api/mode", {mode});
+  if(!r.ok){ setMsg(r.error || "Gagal mengganti mode.", "err"); return; }
+  current.mode = mode;
+  paintMode(mode);
+  setMsg(mode === "seb" ? "Mode SEB aktif. Butuh config ujian." : "Mode web biasa aktif.", "ok");
+}
+
+modeSeb.addEventListener("click", () => pickMode("seb"));
+modeWeb.addEventListener("click", () => pickMode("web"));
+
 async function install(content, filename){
-  setMsg("Membaca file…", "busy");
+  setMsg("Membaca file\u2026", "busy");
   let r;
   try { r = await post("/api/config", {content, filename}); }
   catch { setMsg("Gagal mengirim file ke WebTask.", "err"); return; }
 
   if(!r.ok){ setMsg(r.error || "Gagal import.", "err"); return; }
-  setMsg("Config terpasang: " + (r.config.filename || "config") + " — membuka quiz.", "ok");
+  setMsg("Config terpasang: " + (r.config.filename || "config") + " \u2014 membuka quiz.", "ok");
   refresh();
 }
 
@@ -279,20 +296,11 @@ async function fromFile(f){
   install(text, f.name);
 }
 
-const dz = $("#drop");
-["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("hot"); }));
-["dragleave","drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("hot"); }));
-dz.addEventListener("drop", e => fromFile(e.dataTransfer.files[0]));
-dz.addEventListener("keydown", e => {
-  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#file").click(); }
-});
-$("#pick").addEventListener("click", () => $("#file").click());
-$("#file").addEventListener("change", e => fromFile(e.target.files[0]));
 window.addEventListener("dragover", e => e.preventDefault());
 window.addEventListener("drop", e => {
   e.preventDefault();
   const f = e.dataTransfer && e.dataTransfer.files[0];
-  if(f && !dz.contains(e.target)) fromFile(f);
+  if(f) fromFile(f);
 });
 
 refresh();

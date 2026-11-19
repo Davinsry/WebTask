@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Response, Server};
 
-use crate::{keys, store};
+use crate::{creds, keys, store};
 
 pub type OpenTx = Arc<Mutex<Option<Sender<String>>>>;
 
@@ -87,14 +87,64 @@ fn handle(
                 .as_ref()
                 .and_then(|id| state.configs.iter().find(|c| &c.id == id))
                 .map(public);
+            let creds = creds::public();
             json_response(
                 200,
                 json!({
                     "ok": true,
                     "active": active,
                     "configs": state.configs.iter().map(public).collect::<Vec<_>>(),
+                    "mode": creds.mode,
+                    "login": {
+                        "username": creds.username,
+                        "hasPassword": creds.has_password,
+                    },
                 }),
             )
+        }
+        Method::Post if path == "/api/mode" => {
+            let payload = read_body(&mut request);
+            let raw = payload.get("mode").and_then(Value::as_str).unwrap_or("");
+            match creds::Mode::parse(raw) {
+                Some(mode) => match creds::set_mode(mode) {
+                    Ok(()) => json_response(200, json!({"ok": true, "mode": mode.as_str()})),
+                    Err(e) => json_response(500, json!({"ok": false, "error": e.to_string()})),
+                },
+                None => json_response(400, json!({"ok": false, "error": "mode harus 'seb' atau 'web'"})),
+            }
+        }
+        Method::Post if path == "/api/login" => {
+            let payload = read_body(&mut request);
+            let username = payload.get("username").and_then(Value::as_str).unwrap_or("");
+            let password = payload.get("password").and_then(Value::as_str).unwrap_or("");
+            match creds::save(username, password) {
+                Ok(()) => {
+                    let creds = creds::public();
+                    json_response(
+                        200,
+                        json!({
+                            "ok": true,
+                            "username": creds.username,
+                            "hasPassword": creds.has_password,
+                        }),
+                    )
+                }
+                Err(e) => json_response(400, json!({"ok": false, "error": e})),
+            }
+        }
+        Method::Post if path == "/api/logout" => match creds::clear_password() {
+            Ok(()) => json_response(200, json!({"ok": true})),
+            Err(e) => json_response(500, json!({"ok": false, "error": e.to_string()})),
+        },
+        Method::Post if path == "/api/open" => {
+            let payload = read_body(&mut request);
+            let url = payload.get("url").and_then(Value::as_str).unwrap_or("");
+            if url.is_empty() {
+                json_response(400, json!({"ok": false, "error": "url kosong"}))
+            } else {
+                open(open_tx, url);
+                json_response(200, json!({"ok": true}))
+            }
         }
         Method::Post if path == "/api/config" => {
             let payload = read_body(&mut request);
