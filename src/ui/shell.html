@@ -101,6 +101,31 @@
   .mode .m-desc{color:var(--ink-2);font-size:12.5px;line-height:1.45}
   .mode[aria-pressed="true"] .m-name{color:var(--accent)}
 
+  /* ---- overlay pilih mode ----
+     Jendela dibuka kecil; overlay ini memenuhi seluruh area dan baru hilang
+     setelah user memilih. */
+  body.picking{overflow:hidden}
+  body.picking #shell{display:none}
+  #pick{
+    position:fixed;inset:0;z-index:10;display:flex;
+    background:var(--bg);overflow:auto;
+  }
+  #pick[hidden]{display:none}
+  .pick-card{display:flex;flex-direction:column;width:100%}
+  .pick-head{
+    display:flex;align-items:center;gap:8px;padding:12px 16px;
+    font-weight:700;font-size:14px;letter-spacing:-.01em;
+  }
+  .pick-body{padding:0 16px 18px;display:flex;flex-direction:column;flex:1}
+  .pick-body h1{font-size:19px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+  .pick-body .lead{color:var(--ink-2);font-size:12.5px;margin:0 0 14px}
+  .pick-body .modes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0}
+  .pick-body .mode{padding:13px 14px;gap:4px}
+  .pick-body .mode .m-name{font-size:13.5px}
+  .pick-body .mode .m-desc{font-size:11.5px;line-height:1.4}
+  #pickmsg{margin-top:12px;font-size:12px;color:var(--ink-2);min-height:16px}
+  #pickmsg:empty{display:none}
+
   @media (max-width:560px){
     .wrap{padding:24px 16px 48px}
     h1{font-size:23px}
@@ -114,6 +139,37 @@
 </style>
 </head>
 <body>
+<div id="pick" hidden>
+  <div class="pick-card">
+    <header class="pick-head">
+      <svg width="20" height="20" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path d="M16 8H42L54 20V50C54 53.314 51.314 56 48 56H16C12.686 56 10 53.314 10 50V14C10 10.686 12.686 8 16 8Z" fill="#0F172A"/>
+        <path d="M42 8V16C42 18.209 43.791 20 46 20H54L42 8Z" fill="#2563EB"/>
+        <path d="M21 35.5L28.5 43L43.5 27" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>WebTask<span class="dot">.</span></span>
+    </header>
+    <div class="pick-body">
+      <h1>Pilih mode</h1>
+      <p class="lead">Pilih sekali. Aplikasi langsung terbuka sesuai mode.</p>
+      <div class="modes" role="group" aria-label="Mode sesi">
+        <button class="mode" type="button" id="pick-seb">
+          <span class="m-name">Mode SEB</span>
+          <span class="m-desc">Kunci penuh untuk ujian. Header config dikirim,
+            layar penuh, anti-cheat dinetralkan.</span>
+        </button>
+        <button class="mode" type="button" id="pick-web">
+          <span class="m-name">Mode web biasa</span>
+          <span class="m-desc">Browser seperti Chrome. Bisa searching dan membuka
+            situs apa pun, jendela normal.</span>
+        </button>
+      </div>
+      <div id="pickmsg" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
+
+<div id="shell">
 <header>
   <div class="brand">
     <svg width="22" height="22" viewBox="0 0 64 64" fill="none" aria-hidden="true">
@@ -128,22 +184,8 @@
 
 <main>
 <div class="wrap">
-  <h1>Mulai sesi</h1>
-  <p class="lead">Pilih mode, lalu masuk ke MyKlass. Kredensial disimpan terenkripsi
-    untuk akun Windows ini.</p>
-
-  <div class="modes" role="group" aria-label="Mode sesi">
-    <button class="mode" type="button" id="mode-seb" aria-pressed="false">
-      <span class="m-name">Mode SEB</span>
-      <span class="m-desc">Kunci penuh. Header config ujian dikirim, jendela
-        fullscreen tanpa tombol, anti-cheat dinetralkan.</span>
-    </button>
-    <button class="mode" type="button" id="mode-web" aria-pressed="false">
-      <span class="m-name">Mode web biasa</span>
-      <span class="m-desc">Browser biasa. Tanpa header config, jendela normal
-        dengan title bar, bisa di-resize.</span>
-    </button>
-  </div>
+  <h1>Config ujian</h1>
+  <p class="lead" id="mode-line">Mode aktif dimuat dari pilihan awal.</p>
 
   <div id="msg" role="status" aria-live="polite"></div>
 
@@ -156,11 +198,12 @@
   <p class="foot">Config tersimpan di <code>~/.webtask/configs.json</code>.</p>
 </div>
 </main>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
 const listEl = $("#list"), countEl = $("#count"), msgEl = $("#msg");
-const modeSeb = $("#mode-seb"), modeWeb = $("#mode-web");
+const modeLine = $("#mode-line");
 
 let current = { mode: "seb" };
 
@@ -191,9 +234,10 @@ function openUrl(url){
 }
 
 function paintMode(mode){
-  const seb = mode === "seb";
-  modeSeb.setAttribute("aria-pressed", seb ? "true" : "false");
-  modeWeb.setAttribute("aria-pressed", seb ? "false" : "true");
+  if(!modeLine) return;
+  modeLine.textContent = mode === "seb"
+    ? "Mode SEB aktif. Header config ujian dikirim dan jendela terkunci."
+    : "Mode web biasa aktif. Tanpa header config, jendela normal bisa di-resize.";
 }
 
 async function refresh(){
@@ -275,8 +319,38 @@ async function pickMode(mode){
   setMsg(mode === "seb" ? "Mode SEB aktif. Butuh config ujian." : "Mode web biasa aktif.", "ok");
 }
 
-modeSeb.addEventListener("click", () => pickMode("seb"));
-modeWeb.addEventListener("click", () => pickMode("web"));
+/* ---- overlay pilih mode ----
+   Rust sudah mengubah ukuran/style jendela sebelum halaman ini selesai dimuat,
+   jadi overlay hanya perlu memanggil IPC `pick_mode` lalu menghilang. */
+const pickEl = $("#pick");
+const pickMsgEl = $("#pickmsg");
+
+function startPicking(){
+  document.body.classList.add("picking");
+  pickEl.hidden = false;
+  const seb = document.querySelector("#pick-seb");
+  if(seb) seb.focus();
+}
+
+function choose(mode){
+  pickMsgEl.textContent = "Membuka mode\u2026";
+  try {
+    window.ipc.postMessage(JSON.stringify({type:"pick_mode", mode}));
+  } catch (e) {
+    pickMsgEl.textContent = "Gagal: " + e.message;
+    return;
+  }
+  document.body.classList.remove("picking");
+  pickEl.hidden = true;
+  if(mode === "web") setMsg("Mode web biasa aktif. Tarik file .seb hanya bila perlu.", "ok");
+  else setMsg("Mode SEB aktif. Tarik file .seb untuk membuka quiz.", "ok");
+  refresh();
+}
+
+document.querySelector("#pick-seb").addEventListener("click", () => choose("seb"));
+document.querySelector("#pick-web").addEventListener("click", () => choose("web"));
+
+if(window.__WebTaskPick) startPicking();
 
 async function install(content, filename){
   setMsg("Membaca file\u2026", "busy");

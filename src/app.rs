@@ -1,4 +1,4 @@
-//! WebTask â€” jendela browser + panel UI.
+//! WebTask Ã¢â‚¬â€ jendela browser + panel UI.
 //!
 //! Satu jendela `tao`, satu WebView `wry`. WebView menampilkan shell HTML lokal
 //! yang berisi tab bar + kontainer panel. Navigasi ke halaman quiz dilakukan oleh
@@ -26,6 +26,8 @@ pub enum UserEvent {
     ShowPanel,
     VerifyQuiz,
     VerifyResult(String),
+    /// User memilih mode dari overlay awal.
+    PickMode(creds::Mode),
 }
 
 const JS_SHA: &str = r#"
@@ -82,7 +84,7 @@ fn init_script() -> String {
         .or_else(|| all.first().map(|c| c.config_key.clone()));
 
     format!(
-        "(function(){{\nwindow.__WebTaskMode={mode};\nvar CFG={cfgs},FB={fb},CRED={cred};\n{sha}\n\
+        "(function(){{\nwindow.__WebTaskMode={mode};\nwindow.__WebTaskPick=true;\nvar CFG={cfgs},FB={fb},CRED={cred};\n{sha}\n\
 function key(){{var m=location.search.match(/[?&](?:cmid|id)=(\\d+)/);\n\
  if(m && CFG[m[1]]) return CFG[m[1]]; return FB;}}\n\
 var sec={{version:'WebTask',\n\
@@ -350,25 +352,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // Mode SEB: kiosk penuh, tanpa title bar dan tombol sistem, fullscreen
-    // borderless supaya taskbar tertutup. Mode web: jendela biasa yang bisa
-    // di-resize, dengan title bar dan tombol standar.
-    let seb_mode = creds::mode() == creds::Mode::Seb;
-
+    // Jendela selalu dibuka kecil tanpa kiosk. Shell memuat overlay pilihan
+    // mode; setelah user memilih, jendela diubah sesuai mode (kiosk untuk SEB,
+    // jendela normal untuk web).
+    let needs_pick = true;
     let mut window_builder = WindowBuilder::new()
         .with_title("WebTask")
-        .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(720.0, 480.0));
-
-    if seb_mode {
-        window_builder = window_builder
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_minimizable(false)
-            .with_maximizable(false)
-            .with_closable(false)
-            .with_fullscreen(Some(Fullscreen::Borderless(None)));
-    }
+        .with_inner_size(tao::dpi::LogicalSize::new(440.0, 300.0))
+        .with_resizable(false)
+        .with_maximizable(false)
+        .with_min_inner_size(tao::dpi::LogicalSize::new(360.0, 260.0));
 
     #[cfg(target_os = "windows")]
     {
@@ -420,12 +413,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     unsafe {
         windows_header_hook::install(&webview);
-        if seb_mode {
-            kiosk::install(&window);
-        }
     }
 
     let shell_url_ref = shell_url;
+    let mut launched = !needs_pick;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
@@ -436,6 +427,41 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
+            Event::UserEvent(UserEvent::PickMode(mode)) => {
+                if launched {
+                    return;
+                }
+                launched = true;
+                let _ = creds::set_mode(mode);
+
+                if mode == creds::Mode::Seb {
+                    window.set_maximizable(false);
+                    window.set_decorations(false);
+                    window.set_resizable(false);
+                    window.set_minimizable(false);
+                    window.set_closable(false);
+                    window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                    #[cfg(target_os = "windows")]
+                    unsafe {
+                        kiosk::install(&window);
+                    }
+                } else {
+                    window.set_fullscreen(None);
+                    window.set_decorations(true);
+                    window.set_resizable(true);
+                    window.set_minimizable(true);
+                    window.set_maximizable(true);
+                    window.set_closable(true);
+                    window.set_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0));
+                    if let Some(monitor) = window.current_monitor() {
+                        let screen = monitor.size().to_logical::<f64>(monitor.scale_factor());
+                        let size = window.outer_size().to_logical::<f64>(window.scale_factor());
+                        let x = (screen.width - size.width) / 2.0;
+                        let y = (screen.height - size.height) / 2.0;
+                        window.set_outer_position(tao::dpi::LogicalPosition::new(x, y));
+                    }
+                }
+            }
             Event::UserEvent(UserEvent::OpenUrl(url)) => {
                 navigate(&webview, &url);
             }
@@ -470,7 +496,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 #[cfg(target_os = "windows")]
                 unsafe {
-                    if creds::mode() == creds::Mode::Seb {
+                    if launched && creds::mode() == creds::Mode::Seb {
                         kiosk::enforce();
                     }
                 }
@@ -514,7 +540,7 @@ fn show_toast(webview: &wry::WebView, text: &str, ok: bool) {
   m.setAttribute('aria-hidden','true');
   m.style.cssText='flex:none;width:8px;height:8px;margin-top:5px;border-radius:2px;background:{mark}';
   var t=document.createElement('span');
-  var b=document.createElement('b'); b.textContent={label:?}+' â€” ';
+  var b=document.createElement('b'); b.textContent={label:?}+' Ã¢â‚¬â€ ';
   t.appendChild(b);
   t.appendChild(document.createTextNode({text:?}));
   d.appendChild(m); d.appendChild(t);
@@ -554,6 +580,14 @@ fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>) {
             if !user.is_empty() && !pass.is_empty() {
                 let _ = creds::save(user, pass);
             }
+        }
+        Some("pick_mode") => {
+            let mode = match msg.get("mode").and_then(Value::as_str) {
+                Some("web") => creds::Mode::Web,
+                Some("seb") => creds::Mode::Seb,
+                _ => return,
+            };
+            let _ = proxy.send_event(UserEvent::PickMode(mode));
         }
         _ => {}
     }
@@ -615,7 +649,7 @@ mod windows_header_hook {
 
 /// Penjaga mode kiosk di Windows.
 ///
-/// `tao` tidak mencegah `SetFullscreen`/`Restore` dari luar (Win+â†‘, klik taskbar,
+/// `tao` tidak mencegah `SetFullscreen`/`Restore` dari luar (Win+Ã¢â€ â€˜, klik taskbar,
 /// atau shell), dan borderless fullscreen masih bisa kehilangan status topmost
 /// saat app lain diaktifkan lewat Alt+Tab. Karena itu jendela diperiksa berkala
 /// dari event loop: kalau ada yang mengubah posisinya, ia dikembalikan.
