@@ -5,13 +5,15 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Response, Server};
 
+use crate::browser::SharedTabs;
 use crate::{creds, keys, store};
 
 pub type OpenTx = Arc<Mutex<Option<Sender<String>>>>;
 
 const UI_INDEX: &str = include_str!("ui/shell.html");
+const UI_BROWSER: &str = include_str!("ui/browser.html");
 
-pub fn start(port: u16, open_tx: OpenTx) -> std::io::Result<u16> {
+pub fn start(port: u16, open_tx: OpenTx, tabs: SharedTabs) -> std::io::Result<u16> {
     let server = Server::http(("127.0.0.1", port))
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let actual = server
@@ -22,7 +24,7 @@ pub fn start(port: u16, open_tx: OpenTx) -> std::io::Result<u16> {
 
     std::thread::spawn(move || {
         for request in server.incoming_requests() {
-            let _ = handle(request, &open_tx);
+            let _ = handle(request, &open_tx, &tabs);
         }
     });
     Ok(actual)
@@ -72,6 +74,7 @@ fn read_body(request: &mut tiny_http::Request) -> Value {
 fn handle(
     mut request: tiny_http::Request,
     open_tx: &OpenTx,
+    tabs: &SharedTabs,
 ) -> std::io::Result<()> {
     let path = request.url().split('?').next().unwrap_or("/").to_string();
 
@@ -79,6 +82,13 @@ fn handle(
         Method::Get if path == "/" || path == "/index.html" => {
             let header = Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap();
             Response::from_string(UI_INDEX).with_header(header)
+        }
+        Method::Get if path == "/browser" => {
+            let header = Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap();
+            Response::from_string(UI_BROWSER).with_header(header)
+        }
+        Method::Get if path == "/api/tabs" => {
+            json_response(200, json!({"tabs": &*tabs.lock().unwrap()}))
         }
         Method::Get if path == "/api/state" => {
             let state = store::load();

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>WebTask Browser</title>
+<style>
+  :root{
+    --bg:#EDEBE6; --surface:#FFFFFF; --ink:#16181D; --ink-2:#5A5F6B;
+    --line:#E4E1DB; --line-2:#CFCAC1; --accent:#1F4E79; --accent-soft:#EAF0F6;
+    --r-control:6px;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:92px;overflow:hidden;background:var(--bg);color:var(--ink);
+    font:13px/1 var(--sans);user-select:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .tabs{height:40px;display:flex;align-items:flex-end;gap:2px;padding:6px 8px 0;overflow:hidden}
+  .tab{flex:0 1 200px;min-width:60px;height:34px;display:flex;align-items:center;gap:6px;
+    padding:0 6px 0 12px;border-radius:8px 8px 0 0;background:transparent;color:var(--ink-2);
+    border:0;font:inherit;cursor:pointer;text-align:left}
+  .tab:hover{background:rgba(255,255,255,.55)}
+  .tab[aria-selected="true"]{background:var(--surface);color:var(--ink)}
+  .tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .x{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;
+    color:inherit;cursor:pointer}
+  .x:hover{background:var(--line)}
+  .bar{height:52px;display:flex;align-items:center;gap:6px;padding:0 10px;background:var(--surface);
+    border-bottom:1px solid var(--line)}
+  button.i{width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--ink);
+    font:inherit;font-size:16px;cursor:pointer;display:grid;place-items:center}
+  button.i:hover{background:var(--accent-soft)}
+  #addr{flex:1;display:flex}
+  #url{flex:1;height:34px;border:1px solid var(--line-2);border-radius:17px;padding:0 14px;
+    background:var(--bg);color:var(--ink);font:inherit;font-size:14px;user-select:text}
+  #url:focus{background:var(--surface);border-color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs" role="tablist"></div>
+<div class="bar">
+  <button class="i" id="back" title="Mundur (Alt+←)" aria-label="Mundur">←</button>
+  <button class="i" id="fwd" title="Maju (Alt+→)" aria-label="Maju">→</button>
+  <button class="i" id="reload" title="Muat ulang" aria-label="Muat ulang">⟳</button>
+  <form id="addr"><input id="url" type="text" spellcheck="false" autocomplete="off"
+    placeholder="Cari atau ketik alamat (Ctrl+L)" aria-label="Alamat"></form>
+  <button class="i" id="newtab" title="Tab baru (Ctrl+T)" aria-label="Tab baru">+</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const send = m => { try { window.ipc.postMessage(JSON.stringify(Object.assign({type:'tab'}, m))); } catch (_) {} };
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let sig = '', activeUrl = '';
+
+function host(u){ try { return new URL(u).hostname || u; } catch(_) { return u; } }
+
+function render(tabs){
+  const s = JSON.stringify(tabs);
+  if (s === sig) return;
+  sig = s;
+  $('tabs').innerHTML = tabs.map(t =>
+    `<div class="tab" role="tab" tabindex="0" data-id="${t.id}" aria-selected="${t.active}" title="${esc(t.url)}">
+       <span class="t">${esc(t.title || host(t.url) || 'Tab baru')}</span>
+       <span class="x" data-close="${t.id}" role="button" aria-label="Tutup tab">✕</span></div>`).join('');
+  const a = tabs.find(t => t.active);
+  if (a && a.url !== activeUrl && document.activeElement !== $('url')) $('url').value = a.url;
+  activeUrl = a ? a.url : '';
+}
+
+async function poll(){
+  try { render((await (await fetch('/api/tabs')).json()).tabs); } catch(_) {}
+}
+setInterval(poll, 600); poll();
+
+$('tabs').addEventListener('click', e => {
+  const c = e.target.closest('[data-close]');
+  if (c) return send({cmd:'close', id:+c.dataset.close});
+  const t = e.target.closest('[data-id]');
+  if (t) send({cmd:'select', id:+t.dataset.id});
+});
+$('addr').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = $('url').value.trim();
+  if (v) { send({cmd:'go', url:v}); $('url').blur(); }
+});
+$('url').addEventListener('focus', () => $('url').select());
+$('back').onclick = () => send({cmd:'back'});
+$('fwd').onclick = () => send({cmd:'forward'});
+$('reload').onclick = () => send({cmd:'reload'});
+$('newtab').onclick = () => send({cmd:'new'});
+
+window.__focusAddr = () => { $('url').focus(); $('url').select(); };
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (e.ctrlKey && k === 't') { e.preventDefault(); send({cmd:'new'}); }
+  else if (e.ctrlKey && k === 'w') { e.preventDefault(); send({cmd:'close'}); }
+  else if (e.ctrlKey && k === 'l') { e.preventDefault(); window.__focusAddr(); }
+  else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); send({cmd:'back'}); }
+  else if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); send({cmd:'forward'}); }
+});
+</script>
+</body>
+</html>

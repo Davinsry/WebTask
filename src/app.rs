@@ -16,6 +16,7 @@ use wry::WebViewBuilder;
 #[cfg(target_os = "windows")]
 use wry::WebViewBuilderExtWindows;
 
+use crate::browser::{self, Tabs, CHROME_HEIGHT};
 use crate::{creds, keys, server, store};
 
 const SEB_HOSTS: [&str; 2] = ["myklass-", ".umy.ac.id"];
@@ -28,6 +29,171 @@ pub enum UserEvent {
     VerifyResult(String),
     /// User memilih mode dari overlay awal.
     PickMode(creds::Mode),
+    /// Perintah tab dari chrome browser atau pintasan di halaman tab.
+    Tab(TabCmd),
+    TabState { id: u32, title: String, url: String },
+}
+
+#[derive(Debug)]
+pub enum TabCmd {
+    New(Option<String>),
+    /// `None` = tab aktif.
+    Close(Option<u32>),
+    Select(u32),
+    Go(String),
+    Back,
+    Forward,
+    Reload,
+    FocusAddr,
+}
+
+/// Dipasang di setiap tab: lapor judul/URL dan tangkap pintasan keyboard
+/// (halaman tab yang fokus tidak meneruskan tombol ke chrome).
+const CHILD_JS: &str = r#"
+(function(){
+  if (window.top !== window) return;
+  var last = '';
+  function post(m){ try { window.ipc.postMessage(JSON.stringify(m)); } catch (e) {} }
+  function report(){
+    var s = location.href + '\n' + document.title;
+    if (s === last) return; last = s;
+    post({type:'tab_state', title:document.title, url:location.href});
+  }
+  setInterval(report, 700); addEventListener('load', report);
+  addEventListener('keydown', function(e){
+    var k = (e.key || '').toLowerCase(), c = null;
+    if (e.ctrlKey && !e.altKey) {
+      if (k === 't') c = 'new'; else if (k === 'w') c = 'close'; else if (k === 'l') c = 'focus_addr';
+    }
+    if (c) { e.preventDefault(); e.stopPropagation(); post({type:'tab', cmd:c}); }
+  }, true);
+})();
+"#;
+
+/// Builder dasar. Argumen browser WAJIB sama untuk semua WebView, karena
+/// WebView2 berbagi satu environment per jendela.
+fn base_builder<'a>() -> WebViewBuilder<'a> {
+    WebViewBuilder::new()
+        .with_devtools(true)
+        .with_additional_browser_args(concat!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
+            // Batasi autentikasi terintegrasi ke host yang tidak pernah dipakai,
+            // supaya WebView2 tidak memunculkan dialog "Windows Security" (NTLM)
+            // untuk server kampus.
+            "--auth-server-allowlist=webtask.invalid ",
+            "--auth-negotiate-delegate-allowlist=webtask.invalid"
+        ))
+        .with_initialization_script(init_script())
+        .with_initialization_script(ANTICHEAT_NEUTRALIZE_JS)
+}
+
+fn tab_bounds(window: &tao::window::Window) -> wry::Rect {
+    let s = window.inner_size().to_logical::<f64>(window.scale_factor());
+    wry::Rect {
+        position: wry::dpi::LogicalPosition::new(0.0, CHROME_HEIGHT).into(),
+        size: wry::dpi::LogicalSize::new(s.width, (s.height - CHROME_HEIGHT).max(0.0)).into(),
+    }
+}
+
+type WebTabs = Tabs<wry::WebView>;
+
+fn open_tab(
+    tabs: &mut WebTabs,
+    window: &tao::window::Window,
+    proxy: &EventLoopProxy<UserEvent>,
+    url: &str,
+) {
+    let id = tabs.alloc_id();
+    let built = base_builder()
+        .with_url(url)
+        .with_initialization_script(CHILD_JS)
+        .with_bounds(tab_bounds(window))
+        .with_ipc_handler({
+            let proxy = proxy.clone();
+            move |req| handle_ipc(req.body(), &proxy, Some(id))
+        })
+        // window.open / target=_blank -> tab baru.
+        .with_new_window_req_handler({
+            let proxy = proxy.clone();
+            move |url, _| {
+                let _ = proxy.send_event(UserEvent::Tab(TabCmd::New(Some(url))));
+                wry::NewWindowResponse::Deny
+            }
+        })
+        .build_as_child(window);
+    match built {
+        Ok(view) => {
+            tabs.push(id, url, view);
+            show_active(tabs);
+        }
+        Err(e) => eprintln!("[WebTask] gagal membuat tab: {e}"),
+    }
+}
+
+fn show_active(tabs: &WebTabs) {
+    let active = tabs.active_id();
+    for t in tabs.iter() {
+        let _ = t.view.set_visible(Some(t.id) == active);
+    }
+    if let Some(t) = tabs.active() {
+        let _ = t.view.focus();
+    }
+}
+
+fn default_url() -> String {
+    store::active()
+        .map(|c| c.start_url)
+        .unwrap_or_else(|| "https://duckduckgo.com".to_string())
+}
+
+fn run_tab_cmd(
+    cmd: TabCmd,
+    tabs: &mut WebTabs,
+    window: &tao::window::Window,
+    root: &wry::WebView,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    let script = |tabs: &WebTabs, js: &str| {
+        if let Some(t) = tabs.active() {
+            let _ = t.view.evaluate_script(js);
+        }
+    };
+    match cmd {
+        TabCmd::New(url) => {
+            let url = url.map(|u| browser::normalize(&u)).unwrap_or_else(default_url);
+            open_tab(tabs, window, proxy, &url);
+        }
+        TabCmd::Close(id) => {
+            if let Some(id) = id.or(tabs.active_id()) {
+                tabs.close(id);
+            }
+            if tabs.is_empty() {
+                open_tab(tabs, window, proxy, &default_url());
+            }
+            show_active(tabs);
+        }
+        TabCmd::Select(id) => {
+            if tabs.select(id) {
+                show_active(tabs);
+            }
+        }
+        TabCmd::Go(input) => {
+            let url = browser::normalize(&input);
+            if let Some(id) = tabs.active_id() {
+                if let Some(t) = tabs.get_mut(id) {
+                    let _ = t.view.load_url(&url);
+                    t.url = url;
+                }
+            }
+        }
+        TabCmd::Back => script(tabs, "history.back()"),
+        TabCmd::Forward => script(tabs, "history.forward()"),
+        TabCmd::Reload => script(tabs, "location.reload()"),
+        TabCmd::FocusAddr => {
+            let _ = root.focus();
+            let _ = root.evaluate_script("window.__focusAddr&&window.__focusAddr()");
+        }
+    }
 }
 
 const JS_SHA: &str = r#"
@@ -374,28 +540,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let (open_tx, open_rx): (Sender<String>, _) = channel::<String>();
     let open_storage: server::OpenTx = Arc::new(Mutex::new(Some(open_tx)));
-    let port = server::start(8765, open_storage.clone()).unwrap_or(8765);
+    let shared_tabs: browser::SharedTabs = Default::default();
+    let port = server::start(8765, open_storage.clone(), shared_tabs.clone()).unwrap_or(8765);
     println!("[WebTask] panel UI: http://127.0.0.1:{port}");
     let shell_url = format!("http://127.0.0.1:{port}/");
+    let browser_url = format!("http://127.0.0.1:{port}/browser");
 
     // URL halaman quiz yang perlu diverifikasi setelah selesai load.
     let pending_verify: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let verify_slot = pending_verify.clone();
     let proxy_load = proxy.clone();
 
-    let webview = WebViewBuilder::new()
+    let webview = base_builder()
         .with_url(&shell_url)
-        .with_devtools(true)
-        .with_additional_browser_args(concat!(
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
-            // Batasi autentikasi terintegrasi ke host yang tidak pernah dipakai,
-            // supaya WebView2 tidak memunculkan dialog "Windows Security" (NTLM)
-            // untuk server kampus.
-            "--auth-server-allowlist=webtask.invalid ",
-            "--auth-negotiate-delegate-allowlist=webtask.invalid"
-        ))
-        .with_initialization_script(init_script())
-        .with_initialization_script(ANTICHEAT_NEUTRALIZE_JS)
         .with_on_page_load_handler(move |event, url| {
             use wry::PageLoadEvent;
             if !matches!(event, PageLoadEvent::Finished) || !is_quiz_page(&url) {
@@ -406,7 +563,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         })
         .with_ipc_handler({
             let proxy: EventLoopProxy<UserEvent> = proxy.clone();
-            move |req| handle_ipc(req.body(), &proxy)
+            move |req| handle_ipc(req.body(), &proxy, None)
         })
         .build(&window)?;
 
@@ -417,6 +574,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let shell_url_ref = shell_url;
     let mut launched = !needs_pick;
+    let mut tabs: WebTabs = Default::default();
+    let loop_proxy = proxy.clone();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
@@ -427,6 +586,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => {
+                let b = tab_bounds(&window);
+                for t in tabs.iter() {
+                    let _ = t.view.set_bounds(b);
+                }
+            }
             Event::UserEvent(UserEvent::PickMode(mode)) => {
                 if launched {
                     return;
@@ -460,13 +628,37 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let y = (screen.height - size.height) / 2.0;
                         window.set_outer_position(tao::dpi::LogicalPosition::new(x, y));
                     }
+                    let _ = webview.load_url(&browser_url);
+                    open_tab(&mut tabs, &window, &loop_proxy, &default_url());
+                    *shared_tabs.lock().unwrap() = tabs.info();
                 }
             }
             Event::UserEvent(UserEvent::OpenUrl(url)) => {
-                navigate(&webview, &url);
+                if launched && creds::mode() == creds::Mode::Web {
+                    run_tab_cmd(TabCmd::New(Some(url)), &mut tabs, &window, &webview, &loop_proxy);
+                    *shared_tabs.lock().unwrap() = tabs.info();
+                } else {
+                    navigate(&webview, &url);
+                }
+            }
+            Event::UserEvent(UserEvent::Tab(cmd)) => {
+                if launched && creds::mode() == creds::Mode::Web {
+                    run_tab_cmd(cmd, &mut tabs, &window, &webview, &loop_proxy);
+                    *shared_tabs.lock().unwrap() = tabs.info();
+                }
+            }
+            Event::UserEvent(UserEvent::TabState { id, title, url }) => {
+                if let Some(t) = tabs.get_mut(id) {
+                    t.title = title;
+                    t.url = url;
+                    *shared_tabs.lock().unwrap() = tabs.info();
+                }
             }
             Event::UserEvent(UserEvent::ShowPanel) => {
-                let _ = webview.load_url(&shell_url_ref);
+                // Mode web tidak punya panel; panel hanya untuk SEB.
+                if creds::mode() == creds::Mode::Seb {
+                    let _ = webview.load_url(&shell_url_ref);
+                }
             }
             Event::UserEvent(UserEvent::VerifyQuiz) => {
                 start_verify(&webview);
@@ -492,7 +684,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::MainEventsCleared => {
                 while let Ok(url) = open_rx.try_recv() {
-                    navigate(&webview, &url);
+                    let _ = loop_proxy.send_event(UserEvent::OpenUrl(url));
                 }
                 #[cfg(target_os = "windows")]
                 unsafe {
@@ -553,7 +745,7 @@ fn show_toast(webview: &wry::WebView, text: &str, ok: bool) {
     let _ = webview.evaluate_script(&js);
 }
 
-fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>) {
+fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>, tab: Option<u32>) {
     let msg: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return,
@@ -562,6 +754,34 @@ fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>) {
         Some("open") => {
             if let Some(url) = msg.get("url").and_then(Value::as_str) {
                 let _ = proxy.send_event(UserEvent::OpenUrl(url.to_string()));
+            }
+        }
+        Some("tab") => {
+            let url = msg.get("url").and_then(Value::as_str);
+            let id = msg.get("id").and_then(Value::as_u64).map(|v| v as u32);
+            let cmd = match msg.get("cmd").and_then(Value::as_str) {
+                Some("new") => TabCmd::New(url.map(str::to_string)),
+                Some("close") => TabCmd::Close(id),
+                Some("select") => match id {
+                    Some(id) => TabCmd::Select(id),
+                    None => return,
+                },
+                Some("go") => match url {
+                    Some(u) => TabCmd::Go(u.to_string()),
+                    None => return,
+                },
+                Some("back") => TabCmd::Back,
+                Some("forward") => TabCmd::Forward,
+                Some("reload") => TabCmd::Reload,
+                Some("focus_addr") => TabCmd::FocusAddr,
+                _ => return,
+            };
+            let _ = proxy.send_event(UserEvent::Tab(cmd));
+        }
+        Some("tab_state") => {
+            if let Some(id) = tab {
+                let get = |k: &str| msg.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let _ = proxy.send_event(UserEvent::TabState { id, title: get("title"), url: get("url") });
             }
         }
         Some("panel") => {
