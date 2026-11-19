@@ -5,8 +5,9 @@
 <title>WebTask Browser</title>
 <style>
   :root{
-    --bg:#EDEBE6; --surface:#FFFFFF; --ink:#16181D; --ink-2:#5A5F6B;
-    --line:#E4E1DB; --line-2:#CFCAC1; --accent:#1F4E79; --accent-soft:#EAF0F6;
+    --bg:#0F1A28; --surface:#1D2A3A; --field:#0F1A28; --ink:#E8EAED; --ink-2:#9AA3B0;
+    --line:#2A3748; --line-2:#3A4859; --accent:#8AB4F8; --accent-soft:#2A3A50;
+    color-scheme:dark;
     --r-control:6px;
     --sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   }
@@ -18,7 +19,7 @@
   .tab{flex:0 1 200px;min-width:60px;height:34px;display:flex;align-items:center;gap:6px;
     padding:0 6px 0 12px;border-radius:8px 8px 0 0;background:transparent;color:var(--ink-2);
     border:0;font:inherit;cursor:pointer;text-align:left}
-  .tab:hover{background:rgba(255,255,255,.55)}
+  .tab:hover{background:rgba(255,255,255,.07)}
   .tab[aria-selected="true"]{background:var(--surface);color:var(--ink)}
   .tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .x{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;
@@ -31,12 +32,22 @@
   button.i:hover{background:var(--accent-soft)}
   #addr{flex:1;display:flex}
   #url{flex:1;height:34px;border:1px solid var(--line-2);border-radius:17px;padding:0 14px;
-    background:var(--bg);color:var(--ink);font:inherit;font-size:14px;user-select:text}
-  #url:focus{background:var(--surface);border-color:var(--accent)}
+    background:var(--field);color:var(--ink);font:inherit;font-size:14px;user-select:text}
+  #url:focus{background:var(--field);border-color:var(--accent)}
+  .drag{flex:1;height:100%;min-width:40px}
+  .win{display:flex}
+  .win button{width:46px;height:40px;border:0;background:transparent;color:var(--ink);font:inherit;
+    font-size:14px;cursor:pointer}
+  .win button:hover{background:rgba(255,255,255,.1)}
+  .win button.q:hover{background:#C42B1C}
 </style>
 </head>
 <body>
-<div class="tabs" id="tabs" role="tablist"></div>
+<div style="display:flex;height:40px">
+  <div class="tabs" id="tabs" role="tablist" style="flex:0 1 auto"></div>
+  <div class="drag" id="drag"></div>
+  <div class="win"><button id="wmin" aria-label="Kecilkan">&#8211;</button><button id="wmax" aria-label="Besarkan">&#9633;</button><button class="q" id="wq" aria-label="Tutup">&#10005;</button></div>
+</div>
 <div class="bar">
   <button class="i" id="back" title="Mundur (Alt+←)" aria-label="Mundur">←</button>
   <button class="i" id="fwd" title="Maju (Alt+→)" aria-label="Maju">→</button>
@@ -86,6 +97,11 @@ $('url').addEventListener('focus', () => $('url').select());
 $('back').onclick = () => send({cmd:'back'});
 $('fwd').onclick = () => send({cmd:'forward'});
 $('reload').onclick = () => send({cmd:'reload'});
+$('wmin').onclick = () => send({cmd:'min'});
+$('wmax').onclick = () => send({cmd:'max'});
+$('wq').onclick = () => send({cmd:'quit'});
+$('drag').addEventListener('mousedown', e => { if (e.button === 0 && e.detail === 1) send({cmd:'drag'}); });
+$('drag').addEventListener('dblclick', () => send({cmd:'max'}));
 $('newtab').onclick = () => send({cmd:'new'});
 
 window.__focusAddr = () => { $('url').focus(); $('url').select(); };

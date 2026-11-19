@@ -45,6 +45,11 @@ pub enum TabCmd {
     Forward,
     Reload,
     FocusAddr,
+    Minimize,
+    ToggleMax,
+    Drag,
+    /// Tutup jendela (tombol X di chrome).
+    Quit,
 }
 
 /// Dipasang di setiap tab: lapor judul/URL dan tangkap pintasan keyboard
@@ -189,6 +194,12 @@ fn run_tab_cmd(
         TabCmd::Back => script(tabs, "history.back()"),
         TabCmd::Forward => script(tabs, "history.forward()"),
         TabCmd::Reload => script(tabs, "location.reload()"),
+        TabCmd::Minimize => window.set_minimized(true),
+        TabCmd::ToggleMax => window.set_maximized(!window.is_maximized()),
+        TabCmd::Drag => {
+            let _ = window.drag_window();
+        }
+        TabCmd::Quit => {}
         TabCmd::FocusAddr => {
             let _ = root.focus();
             let _ = root.evaluate_script("window.__focusAddr&&window.__focusAddr()");
@@ -615,7 +626,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 } else {
                     window.set_fullscreen(None);
-                    window.set_decorations(true);
+                    // Chrome sendiri menggambar tab bar + tombol jendela.
+                    window.set_decorations(false);
                     window.set_resizable(true);
                     window.set_minimizable(true);
                     window.set_maximizable(true);
@@ -639,6 +651,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     *shared_tabs.lock().unwrap() = tabs.info();
                 } else {
                     navigate(&webview, &url);
+                }
+            }
+            Event::UserEvent(UserEvent::Tab(TabCmd::Quit)) => {
+                if launched && creds::mode() == creds::Mode::Web {
+                    *control_flow = ControlFlow::Exit;
                 }
             }
             Event::UserEvent(UserEvent::Tab(cmd)) => {
@@ -774,6 +791,10 @@ fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>, tab: Option<u32>) {
                 Some("forward") => TabCmd::Forward,
                 Some("reload") => TabCmd::Reload,
                 Some("focus_addr") => TabCmd::FocusAddr,
+                Some("min") => TabCmd::Minimize,
+                Some("max") => TabCmd::ToggleMax,
+                Some("drag") => TabCmd::Drag,
+                Some("quit") => TabCmd::Quit,
                 _ => return,
             };
             let _ = proxy.send_event(UserEvent::Tab(cmd));
