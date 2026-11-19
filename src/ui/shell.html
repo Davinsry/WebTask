@@ -192,6 +192,8 @@
   <div class="section-head">
     <h2>Config tersimpan</h2>
     <span class="count" id="count"></span>
+    <button class="btn small" type="button" id="upload" style="margin-left:auto">Unggah config</button>
+    <input type="file" id="file" accept=".seb" hidden>
   </div>
   <div class="list" id="list"></div>
 
@@ -255,7 +257,7 @@ async function refresh(){
   if(!configs.length){
     const box = el("div","empty");
     box.append(el("strong", null, "Belum ada config."));
-    box.append(el("span","next","Tarik file .seb ke jendela ini untuk menambah config ujian."));
+    box.append(el("span","next","Klik Unggah config, atau tarik file .seb ke jendela ini."));
     listEl.append(box);
     return;
   }
@@ -328,8 +330,6 @@ const pickMsgEl = $("#pickmsg");
 function startPicking(){
   document.body.classList.add("picking");
   pickEl.hidden = false;
-  const seb = document.querySelector("#pick-seb");
-  if(seb) seb.focus();
 }
 
 function choose(mode){
@@ -369,6 +369,12 @@ async function fromFile(f){
   const text = await f.text();
   install(text, f.name);
 }
+
+$("#upload").addEventListener("click", () => $("#file").click());
+$("#file").addEventListener("change", e => {
+  fromFile(e.target.files[0]);
+  e.target.value = "";
+});
 
 window.addEventListener("dragover", e => e.preventDefault());
 window.addEventListener("drop", e => {
