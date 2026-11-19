@@ -65,6 +65,10 @@ impl<T> Tabs<T> {
         self.items.iter().find(|t| Some(t.id) == self.active)
     }
 
+    pub fn get(&self, id: u32) -> Option<&Tab<T>> {
+        self.items.iter().find(|t| t.id == id)
+    }
+
     pub fn get_mut(&mut self, id: u32) -> Option<&mut Tab<T>> {
         self.items.iter_mut().find(|t| t.id == id)
     }

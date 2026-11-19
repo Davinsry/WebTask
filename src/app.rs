@@ -32,6 +32,8 @@ pub enum UserEvent {
     /// Perintah tab dari chrome browser atau pintasan di halaman tab.
     Tab(TabCmd),
     TabState { id: u32, title: String, url: String },
+    CredCandidate { tab: u32, username: String, password: String },
+    CredQuery { tab: u32 },
 }
 
 #[derive(Debug)]
@@ -50,6 +52,37 @@ pub enum TabCmd {
     Drag,
     /// Tutup jendela (tombol X di chrome).
     Quit,
+    /// Jawaban banner "simpan password?".
+    SaveCred,
+    NeverCred,
+    DismissCred,
+}
+
+/// Isi kolom login di halaman. Mandiri (tanpa fungsi global yang bisa
+/// ditimpa situs); nilai masuk sebagai literal JSON.
+fn fill_script(user: &str, pass: &str) -> String {
+    format!(
+        r#"(function(u,p){{
+  var pw = document.querySelector('input[type=password]');
+  if (!pw || pw.value) return;
+  var set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  function put(el, v){{ set.call(el, v); el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+  var ins = [].slice.call((pw.form || document).querySelectorAll('input'));
+  for (var j = ins.indexOf(pw) - 1; j >= 0; j--) {{
+    var t = (ins[j].type || 'text').toLowerCase();
+    if ((t === 'text' || t === 'email' || t === 'tel') && !ins[j].value) {{ put(ins[j], u); break; }}
+  }}
+  put(pw, p);
+}})({u},{p});"#,
+        u = json!(user),
+        p = json!(pass),
+    )
+}
+
+/// Host dari URL tab (bukan klaim halaman).
+fn tab_host(tabs: &WebTabs, id: u32) -> Option<String> {
+    let url = tabs.get(id)?.view.url().ok()?;
+    crate::vault::host_of(&url)
 }
 
 /// Dipasang di setiap tab: lapor judul/URL dan tangkap pintasan keyboard
@@ -61,9 +94,38 @@ const CHILD_JS: &str = r#"
   function post(m){ try { window.ipc.postMessage(JSON.stringify(m)); } catch (e) {} }
   function report(){
     var s = location.href + '\n' + document.title;
-    if (s === last) return; last = s;
-    post({type:'tab_state', title:document.title, url:location.href});
+    if (s !== last) {
+      last = s; asked = false;
+      post({type:'tab_state', title:document.title, url:location.href});
+    }
+    // Minta login tersimpan sekali per halaman yang punya kolom password.
+    if (!asked && document.querySelector('input[type=password]')) {
+      asked = true; post({type:'cred_query'});
+    }
   }
+  var asked = false, sent = '';
+  function userOf(pw){
+    var ins = [].slice.call((pw.form || document).querySelectorAll('input'));
+    for (var j = ins.indexOf(pw) - 1; j >= 0; j--) {
+      var t = (ins[j].type || 'text').toLowerCase();
+      if ((t === 'text' || t === 'email' || t === 'tel') && ins[j].value) return ins[j].value;
+    }
+    return '';
+  }
+  function candidate(){
+    var pw = [].slice.call(document.querySelectorAll('input[type=password]')).filter(function(i){ return i.value; })[0];
+    if (!pw) return;
+    var u = userOf(pw); if (!u) return;
+    var key = u + '\n' + pw.value; if (key === sent) return; sent = key;
+    post({type:'cred_candidate', username:u, password:pw.value});
+  }
+  addEventListener('submit', candidate, true);
+  addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('button,input[type=submit],[role=button]')) candidate();
+  }, true);
+  addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') candidate();
+  }, true);
   setInterval(report, 700); addEventListener('load', report);
   addEventListener('keydown', function(e){
     var k = (e.key || '').toLowerCase(), c = null;
@@ -146,9 +208,7 @@ fn show_active(tabs: &WebTabs) {
 }
 
 fn default_url() -> String {
-    store::active()
-        .map(|c| c.start_url)
-        .unwrap_or_else(|| "https://duckduckgo.com".to_string())
+    "https://www.google.com".to_string()
 }
 
 fn run_tab_cmd(
@@ -199,7 +259,7 @@ fn run_tab_cmd(
         TabCmd::Drag => {
             let _ = window.drag_window();
         }
-        TabCmd::Quit => {}
+        TabCmd::Quit | TabCmd::SaveCred | TabCmd::NeverCred | TabCmd::DismissCred => {}
         TabCmd::FocusAddr => {
             let _ = root.focus();
             let _ = root.evaluate_script("window.__focusAddr&&window.__focusAddr()");
@@ -586,6 +646,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let shell_url_ref = shell_url;
     let mut launched = !needs_pick;
     let mut tabs: WebTabs = Default::default();
+    // (host, username, password) yang menunggu jawaban banner.
+    let mut pending: Option<(String, String, String)> = None;
     let loop_proxy = proxy.clone();
 
     event_loop.run(move |event, _, control_flow| {
@@ -651,6 +713,47 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     *shared_tabs.lock().unwrap() = tabs.info();
                 } else {
                     navigate(&webview, &url);
+                }
+            }
+            Event::UserEvent(UserEvent::CredQuery { tab }) => {
+                if let (Some(host), Some(t)) = (tab_host(&tabs, tab), tabs.get(tab)) {
+                    if let Some((u, p)) = crate::vault::lookup(&host).into_iter().next() {
+                        let _ = t.view.evaluate_script(&fill_script(&u, &p));
+                    }
+                }
+            }
+            Event::UserEvent(UserEvent::CredCandidate { tab, username, password }) => {
+                let Some(host) = tab_host(&tabs, tab) else { return };
+                if crate::vault::is_never(&host) {
+                    return;
+                }
+                let known = crate::vault::lookup(&host);
+                if known.iter().any(|(u, p)| *u == username && *p == password) {
+                    return;
+                }
+                let update = known.iter().any(|(u, _)| *u == username);
+                let js = format!(
+                    "window.__offerSave&&window.__offerSave({},{},{})",
+                    json!(host),
+                    json!(username),
+                    update
+                );
+                pending = Some((host, username, password));
+                let _ = webview.evaluate_script(&js);
+            }
+            Event::UserEvent(UserEvent::Tab(
+                cmd @ (TabCmd::SaveCred | TabCmd::NeverCred | TabCmd::DismissCred),
+            )) => {
+                if let Some((host, user, pass)) = pending.take() {
+                    match cmd {
+                        TabCmd::SaveCred => {
+                            if let Err(e) = crate::vault::save(&host, &user, &pass) {
+                                eprintln!("[WebTask] gagal menyimpan login: {e}");
+                            }
+                        }
+                        TabCmd::NeverCred => crate::vault::set_never(&host),
+                        _ => {}
+                    }
                 }
             }
             Event::UserEvent(UserEvent::Tab(TabCmd::Quit)) => {
@@ -795,9 +898,26 @@ fn handle_ipc(body: &str, proxy: &EventLoopProxy<UserEvent>, tab: Option<u32>) {
                 Some("max") => TabCmd::ToggleMax,
                 Some("drag") => TabCmd::Drag,
                 Some("quit") => TabCmd::Quit,
+                Some("save_yes") => TabCmd::SaveCred,
+                Some("save_never") => TabCmd::NeverCred,
+                Some("save_dismiss") => TabCmd::DismissCred,
                 _ => return,
             };
             let _ = proxy.send_event(UserEvent::Tab(cmd));
+        }
+        Some("cred_query") => {
+            if let Some(tab) = tab {
+                let _ = proxy.send_event(UserEvent::CredQuery { tab });
+            }
+        }
+        Some("cred_candidate") => {
+            if let Some(tab) = tab {
+                let get = |k: &str| msg.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let (username, password) = (get("username"), get("password"));
+                if !username.is_empty() && !password.is_empty() {
+                    let _ = proxy.send_event(UserEvent::CredCandidate { tab, username, password });
+                }
+            }
         }
         Some("tab_state") => {
             if let Some(id) = tab {

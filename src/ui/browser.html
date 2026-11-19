@@ -34,6 +34,12 @@
   #url{flex:1;height:34px;border:1px solid var(--line-2);border-radius:17px;padding:0 14px;
     background:var(--field);color:var(--ink);font:inherit;font-size:14px;user-select:text}
   #url:focus{background:var(--field);border-color:var(--accent)}
+  [hidden]{display:none!important}
+  #offer{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+  #offer span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #offer button{height:30px;padding:0 14px;border-radius:15px;border:1px solid var(--line-2);
+    background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+  #offer button.p{background:var(--accent);border-color:var(--accent);color:#0F1A28;font-weight:600}
   .drag{flex:1;height:100%;min-width:40px}
   .win{display:flex}
   .win button{width:46px;height:40px;border:0;background:transparent;color:var(--ink);font:inherit;
@@ -45,6 +51,7 @@
 <body>
 <div style="display:flex;height:40px">
   <div class="tabs" id="tabs" role="tablist" style="flex:0 1 auto"></div>
+  <button class="i" id="newtab" title="Tab baru (Ctrl+T)" aria-label="Tab baru" style="align-self:center;margin-left:2px">+</button>
   <div class="drag" id="drag"></div>
   <div class="win"><button id="wmin" aria-label="Kecilkan">&#8211;</button><button id="wmax" aria-label="Besarkan">&#9633;</button><button class="q" id="wq" aria-label="Tutup">&#10005;</button></div>
 </div>
@@ -52,9 +59,14 @@
   <button class="i" id="back" title="Mundur (Alt+←)" aria-label="Mundur">←</button>
   <button class="i" id="fwd" title="Maju (Alt+→)" aria-label="Maju">→</button>
   <button class="i" id="reload" title="Muat ulang" aria-label="Muat ulang">⟳</button>
+  <div id="offer" hidden role="alertdialog" aria-label="Simpan password">
+    <span id="offerText"></span>
+    <button class="p" id="offYes">Simpan</button>
+    <button id="offNever">Jangan untuk situs ini</button>
+    <button id="offNo">Nanti</button>
+  </div>
   <form id="addr"><input id="url" type="text" spellcheck="false" autocomplete="off"
     placeholder="Cari atau ketik alamat (Ctrl+L)" aria-label="Alamat"></form>
-  <button class="i" id="newtab" title="Tab baru (Ctrl+T)" aria-label="Tab baru">+</button>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -97,6 +109,16 @@ $('url').addEventListener('focus', () => $('url').select());
 $('back').onclick = () => send({cmd:'back'});
 $('fwd').onclick = () => send({cmd:'forward'});
 $('reload').onclick = () => send({cmd:'reload'});
+let offerTimer;
+function answer(c){ $('offer').hidden = true; $('addr').hidden = false; clearTimeout(offerTimer); send({cmd:c}); }
+window.__offerSave = (host, user, update) => {
+  $('offerText').textContent = (update ? 'Perbarui' : 'Simpan') + ' password untuk ' + host + ' (' + user + ')?';
+  $('offer').hidden = false; $('addr').hidden = true;
+  clearTimeout(offerTimer); offerTimer = setTimeout(() => answer('save_dismiss'), 20000);
+};
+$('offYes').onclick = () => answer('save_yes');
+$('offNever').onclick = () => answer('save_never');
+$('offNo').onclick = () => answer('save_dismiss');
 $('wmin').onclick = () => send({cmd:'min'});
 $('wmax').onclick = () => send({cmd:'max'});
 $('wq').onclick = () => send({cmd:'quit'});

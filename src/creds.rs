@@ -132,6 +132,16 @@ pub fn credentials() -> Option<(String, String)> {
     Some((state.username, password))
 }
 
+/// Enkripsi teks ke base64 (DPAPI).
+pub(crate) fn seal(plain: &str) -> Result<String, String> {
+    protect(plain.as_bytes()).map(|b| b64_encode(&b))
+}
+
+/// Kebalikan `seal`.
+pub(crate) fn unseal(sealed: &str) -> Option<String> {
+    String::from_utf8(unprotect(&b64_decode(sealed)?).ok()?).ok()
+}
+
 // ---- base64 ----
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
